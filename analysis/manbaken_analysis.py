@@ -1,6 +1,6 @@
 """各競馬場の3連単万馬券（配当10,000円以上）の特徴分析.
 
-入力: data/ 配下の 2023/2026 払戻・出走馬・レース一覧 CSV
+入力: data/ 配下の 2023〜2026 払戻・出走馬・レース一覧 CSV
 出力: analysis/out/*.csv と標準出力のサマリ
 """
 import re
@@ -20,8 +20,31 @@ def read(name):
     return pd.read_csv(DATA / name, encoding="utf-8-sig", low_memory=False)
 
 
+YEARS = {  # 年: 出走馬ファイル (払戻は payYYYY.csv, レース一覧は raceYYYY.csv)
+    2023: "2023_horselist_全月まとめ.csv",
+    2024: "2024_horselist_全月まとめ.csv",
+    2025: "2025_horselist_全月まとめ.csv",
+    2026: "2026_horselist_1-8月まとめ.csv",
+}
+
+
+def fukusho(pay):
+    """複勝払戻を (KEY, 馬番) -> 払戻 の縦持ちに"""
+    parts = []
+    for i in (1, 2, 3):
+        x = pay[KEY + [f"複勝組番{i}", f"複勝払戻金{i}（円）"]].dropna()
+        x.columns = KEY + ["馬番", "複勝払戻"]
+        parts.append(x)
+    return pd.concat(parts).drop_duplicates(KEY + ["馬番"])
+
+
 def load_year(year, horse_file, pay_file):
-    pay = read(pay_file).drop_duplicates(KEY)  # 同着は先頭行
+    raw = read(pay_file)
+    pay = raw.drop_duplicates(KEY)  # 同着は先頭行
+    fuku = fukusho(raw)
+    tan = raw[KEY + ["単勝組番", "単勝払戻金（円）"]].dropna()
+    tan.columns = KEY + ["馬番", "単勝払戻"]
+    tan = tan.drop_duplicates(KEY + ["馬番"])
     pay = pay[KEY + ["３連単払戻金（円）", "３連単人気"]].dropna(subset=["３連単払戻金（円）"])
     pay["万馬券"] = pay["３連単払戻金（円）"] >= TH
     pay["年"] = year
@@ -29,6 +52,11 @@ def load_year(year, horse_file, pay_file):
     h["着順"] = pd.to_numeric(h["着順"], errors="coerce")
     h["人気"] = pd.to_numeric(h["人気"], errors="coerce")
     h["年"] = year
+    h["馬番"] = pd.to_numeric(h["馬番"], errors="coerce")
+    for t in (fuku, tan):
+        t["馬番"] = pd.to_numeric(t["馬番"], errors="coerce")
+    h = h.merge(fuku, on=KEY + ["馬番"], how="left").merge(tan, on=KEY + ["馬番"], how="left")
+    h[["複勝払戻", "単勝払戻"]] = h[["複勝払戻", "単勝払戻"]].fillna(0)
     n = h.groupby(KEY).size().rename("頭数")
     pay = pay.merge(n, left_on=KEY, right_index=True, how="left")
     return pay, h
@@ -68,10 +96,12 @@ def running_style(race):
 
 
 def main():
-    p23, h23 = load_year(2023, "2023_horselist_全月まとめ.csv", "pay2023.csv")
-    p26, h26 = load_year(2026, "2026_horselist_1-8月まとめ.csv", "pay2026.csv")
-    pay = pd.concat([p23, p26])
-    h = pd.concat([h23, h26]).merge(pay[KEY + ["万馬券", "３連単払戻金（円）"]], on=KEY, how="inner")
+    loaded = {y: load_year(y, f, f"pay{y}.csv") for y, f in YEARS.items()}
+    pay = pd.concat([p for p, _ in loaded.values()])
+    race_years = [y for y in YEARS if (DATA / f"race{y}.csv").exists()]
+    p_r = pay[pay["年"].isin(race_years)]
+    h_r = pd.concat([loaded[y][1] for y in race_years])
+    h = pd.concat([hh for _, hh in loaded.values()]).merge(pay[KEY + ["万馬券", "３連単払戻金（円）"]], on=KEY, how="inner")
     h["top3"] = h["着順"] <= 3
     h["穴top3"] = h["top3"] & (h["人気"] >= 6)
 
@@ -80,12 +110,12 @@ def main():
     summ = pd.DataFrame({
         "レース数": g.size(),
         "万馬券率": g["万馬券"].mean(),
-        "万馬券率2023": p23.groupby("競馬場")["万馬券"].mean(),
-        "万馬券率2026": p26.groupby("競馬場")["万馬券"].mean(),
         "3連単中央値": g["３連単払戻金（円）"].median(),
         "10万超率": g["３連単払戻金（円）"].apply(lambda x: (x >= 100000).mean()),
         "平均頭数": g["頭数"].mean(),
     })
+    for y in YEARS:
+        summ[f"万馬券率{y}"] = pay[pay["年"] == y].groupby("競馬場")["万馬券"].mean()
 
     # ---- 2. 人気との乖離 ----
     top = h[h["top3"]]
@@ -112,11 +142,11 @@ def main():
     pay["頭数帯"] = pd.cut(pay["頭数"], [0, 8, 10, 12, 99], labels=["~8頭", "9-10頭", "11-12頭", "13頭~"])
     by_n = pay.pivot_table(index="競馬場", columns="頭数帯", values="万馬券", aggfunc="mean", observed=False)
 
-    # ---- 3. 馬場状態 (2026のみ: レース情報あり) ----
-    r = read("race2026.csv").drop_duplicates(KEY)
-    r = r.merge(p26[KEY + ["万馬券", "３連単払戻金（円）"]], on=KEY, how="inner")
+    # ---- 3. 馬場状態 (レース一覧がある年のみ) ----
+    r = pd.concat([read(f"race{y}.csv") for y in race_years]).drop_duplicates(KEY)
+    r = r.merge(p_r[KEY + ["万馬券", "３連単払戻金（円）"]], on=KEY, how="inner")
     ban = r["競馬場"] == "帯広ば"
-    r["馬場区分"] = r["馬場"]
+    r["馬場区分"] = r["馬場"].where(r["馬場"].isin(["良", "稍重", "重", "不良"]))
     m = pd.to_numeric(r.loc[ban, "馬場"], errors="coerce")
     r.loc[ban, "馬場区分"] = pd.cut(m, [-1, 1.4, 2.4, 99], labels=["水分~1.4%(重い)", "1.5-2.4%", "2.5%~(軽い)"]).astype(str)
     baba = r.pivot_table(index="競馬場", columns="馬場区分", values="万馬券", aggfunc="mean")
@@ -127,13 +157,13 @@ def main():
     r["R帯"] = pd.cut(r["レース番号"], [0, 4, 8, 99], labels=["1-4R", "5-8R", "9R~"])
     rno = r.pivot_table(index="競馬場", columns="R帯", values="万馬券", aggfunc="mean", observed=False)
 
-    # ---- 4. 脚質・展開 (2026, ばんえい除く) ----
+    # ---- 4. 脚質・展開 (レース一覧がある年, ばんえい除く) ----
     rows = []
     for _, race in r[~ban].iterrows():
         for b, (st, p) in running_style(race).items():
             rows.append((race["競馬場"], race["競走年月日"], race["レース番号"], b, st, p))
     st = pd.DataFrame(rows, columns=KEY + ["馬番", "脚質", "最終角位置"])
-    hs = h26.merge(st, on=KEY + ["馬番"]).merge(p26[KEY + ["万馬券"]], on=KEY)
+    hs = h_r.merge(st, on=KEY + ["馬番"]).merge(p_r[KEY + ["万馬券"]], on=KEY)
     hs["top3"] = hs["着順"] <= 3
     win = hs[hs["着順"] == 1]
     style_win = pd.crosstab([win["競馬場"], win["万馬券"]], win["脚質"], normalize="index")
@@ -149,7 +179,7 @@ def main():
     mt26 = hs[hs["top3"]]
     front = mt26.assign(前=mt26["最終角位置"] <= 3).groupby(["競馬場", "万馬券"])["前"].mean().unstack()
 
-    # ---- 5. 騎手 (2023+2026) ----
+    # ---- 5. 騎手 (全年) ----
     hj = h.copy()
     jg = hj.groupby(["競馬場", "騎手名"])
     jk = pd.DataFrame({
@@ -160,18 +190,22 @@ def main():
         "万馬券を穴で演出": jg.apply(lambda x: (x["穴top3"] & x["万馬券"]).sum(), include_groups=False),
         "1人気騎乗": jg["人気"].apply(lambda x: (x == 1).sum()),
         "1人気着外": jg.apply(lambda x: ((x["人気"] == 1) & ~x["top3"]).sum(), include_groups=False),
+        "穴複勝回収率": jg.apply(lambda x: x.loc[x["人気"] >= 6, "複勝払戻"].sum() / 100 / max((x["人気"] >= 6).sum(), 1), include_groups=False),
+        "穴単勝回収率": jg.apply(lambda x: x.loc[x["人気"] >= 6, "単勝払戻"].sum() / 100 / max((x["人気"] >= 6).sum(), 1), include_groups=False),
     }).reset_index()
     jk["穴3着内率"] = jk["穴3着内数"] / jk["6人気~騎乗"]
     jk["1人気着外率"] = jk["1人気着外"] / jk["1人気騎乗"]
     base = hj[hj["人気"] >= 6].groupby("競馬場")["top3"].mean().rename("場平均穴3着内率")
     jk = jk.merge(base, left_on="競馬場", right_index=True)
     jk["穴期待比"] = jk["穴3着内率"] / jk["場平均穴3着内率"]
-    jk = jk[jk["6人気~騎乗"] >= 60]
+    jk = jk[jk["6人気~騎乗"] >= 150]
     top_j = (jk.sort_values(["競馬場", "万馬券を穴で演出"], ascending=[True, False])
                .groupby("競馬場").head(5))
     top_ratio = (jk.sort_values(["競馬場", "穴期待比"], ascending=[True, False])
                    .groupby("競馬場").head(3))
-    fav_j = jk[jk["1人気騎乗"] >= 30].sort_values(["競馬場", "1人気着外率"], ascending=[True, False]).groupby("競馬場").head(2)
+    roi_j = (jk.sort_values(["競馬場", "穴複勝回収率"], ascending=[True, False])
+               .groupby("競馬場").head(3))
+    fav_j = jk[jk["1人気騎乗"] >= 50].sort_values(["競馬場", "1人気着外率"], ascending=[True, False]).groupby("競馬場").head(2)
 
     res = {
         "summary": summ.sort_values("万馬券率", ascending=False),
@@ -180,6 +214,7 @@ def main():
         "style_winner": style_win, "nige_top3": nige, "style_ana": style_ana,
         "style_fav_flop": style_flop, "front_share": front,
         "jockey_ana_count": top_j, "jockey_ana_ratio": top_ratio, "jockey_fav_flop": fav_j,
+        "jockey_ana_roi": roi_j,
     }
     pd.set_option("display.width", 250, "display.max_columns", 30, "display.max_rows", 300)
     for k, v in res.items():
