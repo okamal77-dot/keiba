@@ -144,3 +144,45 @@ WHERE hn IS NOT NULL AND TRIM(hn) NOT IN ('', '0000000000')
 GROUP BY r_no, u_no, horse, hn, anc_name
 HAVING COUNT(*) >= 2
 ORDER BY r_no, u_no;
+
+-- =====================================================================
+-- STEP 4 (代替): 出走馬データを取り込めない日用. 馬名リストから3代血統を引く
+--   JRA 等の出馬表から馬名をコピーして IN (...) に並べる. 競走馬マスタに無い馬
+--   (未取込の新馬など) は「マスタ未登録」として行だけ残る.
+-- =====================================================================
+WITH names (no, name) AS (
+              SELECT  1, 'アドアプローズ'
+    UNION ALL SELECT  2, 'カルマンフィルター'
+    -- UNION ALL SELECT  3, '馬名' ... と出走頭数分追加 (no は馬番などの並び順)
+)
+SELECT
+    n.no,
+    n.name AS bamei,
+    CASE WHEN um.ketto_toroku_bango IS NULL THEN 'マスタ未登録' END AS 注意,
+    um.ketto_toroku_bango,
+    TRIM(TRAILING '　' FROM um.ketto1_bamei)  AS 父,
+    TRIM(TRAILING '　' FROM um.ketto2_bamei)  AS 母,
+    TRIM(TRAILING '　' FROM um.ketto5_bamei)  AS 母父,
+    TRIM(TRAILING '　' FROM um.ketto3_bamei)  AS 父父,
+    TRIM(TRAILING '　' FROM um.ketto4_bamei)  AS 父母,
+    TRIM(TRAILING '　' FROM um.ketto6_bamei)  AS 母母,
+    TRIM(TRAILING '　' FROM um.ketto13_bamei) AS 母母父,
+    TRIM(TRAILING '　' FROM um.ketto7_bamei)  AS 父父父,
+    TRIM(TRAILING '　' FROM um.ketto8_bamei)  AS 父父母,
+    TRIM(TRAILING '　' FROM um.ketto9_bamei)  AS 父母父,
+    TRIM(TRAILING '　' FROM um.ketto10_bamei) AS 父母母,
+    TRIM(TRAILING '　' FROM um.ketto11_bamei) AS 母父父,
+    TRIM(TRAILING '　' FROM um.ketto12_bamei) AS 母父母,
+    TRIM(TRAILING '　' FROM um.ketto14_bamei) AS 母母母
+FROM names AS n
+LEFT JOIN kyosoba_master2 AS um
+       ON TRIM(TRAILING '　' FROM um.bamei) = n.name
+ORDER BY n.no;
+
+-- 取込状況の確認: 各テーブルに最後にデータが入った日時
+SELECT 'umagoto_race_joho' AS tbl, MAX(insert_timestamp) AS 最終追加, MAX(update_timestamp) AS 最終更新,
+       MAX(CONCAT(kaisai_nen, kaisai_gappi)) AS 最新開催日
+FROM umagoto_race_joho
+UNION ALL
+SELECT 'kyosoba_master2', MAX(insert_timestamp), MAX(update_timestamp), NULL
+FROM kyosoba_master2;
