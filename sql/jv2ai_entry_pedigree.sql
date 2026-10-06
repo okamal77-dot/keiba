@@ -28,7 +28,7 @@ ORDER BY ordinal_position;
 -- STEP 1: 抽出条件
 -- =====================================================================
 SET @kaisai_nen     = '2026';   -- 開催年 (YYYY)
-SET @kaisai_gappi = '1004';   -- 開催月日 (MMDD)
+SET @kaisai_gappi   = '0922';   -- 開催月日 (MMDD)
 SET @keibajo_code   = '06';     -- 競馬場コード (01札幌 02函館 03福島 04新潟 05東京 06中山 07中京 08京都 09阪神 10小倉)
 SET @race_bango     = NULL;     -- レース番号 ('11' 等). NULL なら当日全レース
 
@@ -44,6 +44,23 @@ LIMIT 30;
 -- =====================================================================
 -- STEP 2: 出走馬 × 3代血統
 -- =====================================================================
+WITH se AS (  -- 同じ馬が data_kubun 別 (1:出走馬名表 2:出馬表 … 7:成績) に重複して入るため最新の1件に絞る
+    SELECT *
+    FROM (
+        SELECT u.*,
+               ROW_NUMBER() OVER (
+                   PARTITION BY kaisai_nen, kaisai_gappi, keibajo_code, race_bango, umaban
+                   ORDER BY FIELD(data_kubun, '7', '6', '5', '4', '3', '2', '1', '9', 'A')
+               ) AS rn
+        FROM umagoto_race_joho AS u
+        WHERE kaisai_nen   = @kaisai_nen
+          AND kaisai_gappi = @kaisai_gappi
+          AND keibajo_code = @keibajo_code
+          AND (@race_bango IS NULL OR race_bango = @race_bango)
+          AND data_kubun <> '0'                  -- 0:削除
+    ) AS x
+    WHERE rn = 1
+)
 SELECT
     se.kaisai_nen,
     se.kaisai_gappi,
@@ -53,6 +70,7 @@ SELECT
     se.umaban,
     se.ketto_toroku_bango,
     se.bamei,
+    se.data_kubun,                -- 採用したデータの種類 (2:出馬表 7:確定成績 等)
     -- 父系・母系の主要どころ
     um.ketto1_bamei   AS 父,
     um.ketto2_bamei   AS 母,
@@ -73,27 +91,36 @@ SELECT
     um.ketto1_hanshoku_toroku_bango AS 父_繁殖登録番号,
     um.ketto2_hanshoku_toroku_bango AS 母_繁殖登録番号,
     um.ketto5_hanshoku_toroku_bango AS 母父_繁殖登録番号
-FROM umagoto_race_joho AS se
+FROM se
 LEFT JOIN kyosoba_master2 AS um   -- マスタ未取込の馬も出走馬として残す
        ON um.ketto_toroku_bango = se.ketto_toroku_bango
-WHERE se.kaisai_nen     = @kaisai_nen
-  AND se.kaisai_gappi = @kaisai_gappi
-  AND se.keibajo_code   = @keibajo_code
-  AND (@race_bango IS NULL OR se.race_bango = @race_bango)
 ORDER BY se.race_bango, se.umaban;
 
 -- =====================================================================
 -- STEP 3 (任意): 3代内のインブリード (同名馬が2回以上出現) を出走馬ごとに列挙
 -- =====================================================================
-WITH entry AS (
+WITH se AS (  -- 同じ馬が data_kubun 別 (1:出走馬名表 2:出馬表 … 7:成績) に重複して入るため最新の1件に絞る
+    SELECT *
+    FROM (
+        SELECT u.*,
+               ROW_NUMBER() OVER (
+                   PARTITION BY kaisai_nen, kaisai_gappi, keibajo_code, race_bango, umaban
+                   ORDER BY FIELD(data_kubun, '7', '6', '5', '4', '3', '2', '1', '9', 'A')
+               ) AS rn
+        FROM umagoto_race_joho AS u
+        WHERE kaisai_nen   = @kaisai_nen
+          AND kaisai_gappi = @kaisai_gappi
+          AND keibajo_code = @keibajo_code
+          AND (@race_bango IS NULL OR race_bango = @race_bango)
+          AND data_kubun <> '0'                  -- 0:削除
+    ) AS x
+    WHERE rn = 1
+),
+entry AS (
     -- um.* にも bamei 等があるため, 出走馬側の列は別名にして重複列エラーを避ける
     SELECT se.race_bango AS r_no, se.umaban AS u_no, se.bamei AS horse, um.*
-    FROM umagoto_race_joho AS se
+    FROM se
     JOIN kyosoba_master2 AS um ON um.ketto_toroku_bango = se.ketto_toroku_bango
-    WHERE se.kaisai_nen     = @kaisai_nen
-      AND se.kaisai_gappi = @kaisai_gappi
-      AND se.keibajo_code   = @keibajo_code
-      AND (@race_bango IS NULL OR se.race_bango = @race_bango)
 ),
 anc AS (  -- 14頭分を縦持ちに展開 (母系の牝馬もクロス判定に含める)
               SELECT r_no, u_no, horse, ketto1_hanshoku_toroku_bango  AS hn, ketto1_bamei  AS anc_name FROM entry
