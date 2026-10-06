@@ -32,6 +32,15 @@ SET @kaisai_gappi = '1004';   -- 開催月日 (MMDD)
 SET @keibajo_code   = '06';     -- 競馬場コード (01札幌 02函館 03福島 04新潟 05東京 06中山 07中京 08京都 09阪神 10小倉)
 SET @race_bango     = NULL;     -- レース番号 ('11' 等). NULL なら当日全レース
 
+-- STEP 1b: STEP 2 が 0 件のときの確認用. 取り込み済みの開催日・競馬場と件数を新しい順に表示
+--          (指定した日付/競馬場コードがここに無ければ, 未開催かデータ未取込)
+SELECT kaisai_nen, kaisai_gappi, keibajo_code, data_kubun,
+       COUNT(DISTINCT race_bango) AS レース数, COUNT(*) AS 出走頭数
+FROM umagoto_race_joho
+GROUP BY kaisai_nen, kaisai_gappi, keibajo_code, data_kubun
+ORDER BY kaisai_nen DESC, kaisai_gappi DESC, keibajo_code
+LIMIT 30;
+
 -- =====================================================================
 -- STEP 2: 出走馬 × 3代血統
 -- =====================================================================
