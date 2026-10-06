@@ -69,24 +69,24 @@ SELECT
     se.wakuban,
     se.umaban,
     se.ketto_toroku_bango,
-    se.bamei,
+    TRIM(TRAILING '　' FROM se.bamei) AS bamei,   -- 馬名は全角スペースで固定長埋めされているため除去
     se.data_kubun,                -- 採用したデータの種類 (2:出馬表 7:確定成績 等)
     -- 父系・母系の主要どころ
-    um.ketto1_bamei   AS 父,
-    um.ketto2_bamei   AS 母,
-    um.ketto5_bamei   AS 母父,
-    um.ketto3_bamei   AS 父父,
-    um.ketto4_bamei   AS 父母,
-    um.ketto6_bamei   AS 母母,
-    um.ketto13_bamei  AS 母母父,
+    TRIM(TRAILING '　' FROM um.ketto1_bamei) AS 父,
+    TRIM(TRAILING '　' FROM um.ketto2_bamei) AS 母,
+    TRIM(TRAILING '　' FROM um.ketto5_bamei) AS 母父,
+    TRIM(TRAILING '　' FROM um.ketto3_bamei) AS 父父,
+    TRIM(TRAILING '　' FROM um.ketto4_bamei) AS 父母,
+    TRIM(TRAILING '　' FROM um.ketto6_bamei) AS 母母,
+    TRIM(TRAILING '　' FROM um.ketto13_bamei) AS 母母父,
     -- 3代目 (残り)
-    um.ketto7_bamei   AS 父父父,
-    um.ketto8_bamei   AS 父父母,
-    um.ketto9_bamei   AS 父母父,
-    um.ketto10_bamei  AS 父母母,
-    um.ketto11_bamei  AS 母父父,
-    um.ketto12_bamei  AS 母父母,
-    um.ketto14_bamei  AS 母母母,
+    TRIM(TRAILING '　' FROM um.ketto7_bamei) AS 父父父,
+    TRIM(TRAILING '　' FROM um.ketto8_bamei) AS 父父母,
+    TRIM(TRAILING '　' FROM um.ketto9_bamei) AS 父母父,
+    TRIM(TRAILING '　' FROM um.ketto10_bamei) AS 父母母,
+    TRIM(TRAILING '　' FROM um.ketto11_bamei) AS 母父父,
+    TRIM(TRAILING '　' FROM um.ketto12_bamei) AS 母父母,
+    TRIM(TRAILING '　' FROM um.ketto14_bamei) AS 母母母,
     -- 他テーブル (産駒成績・繁殖馬マスタ HN 等) と結合するための繁殖登録番号
     um.ketto1_hanshoku_toroku_bango AS 父_繁殖登録番号,
     um.ketto2_hanshoku_toroku_bango AS 母_繁殖登録番号,
@@ -118,7 +118,7 @@ WITH se AS (  -- 同じ馬が data_kubun 別 (1:出走馬名表 2:出馬表 … 
 ),
 entry AS (
     -- um.* にも bamei 等があるため, 出走馬側の列は別名にして重複列エラーを避ける
-    SELECT se.race_bango AS r_no, se.umaban AS u_no, se.bamei AS horse, um.*
+    SELECT se.race_bango AS r_no, se.umaban AS u_no, TRIM(TRAILING '　' FROM se.bamei) AS horse, um.*
     FROM se
     JOIN kyosoba_master2 AS um ON um.ketto_toroku_bango = se.ketto_toroku_bango
 ),
@@ -138,7 +138,7 @@ anc AS (  -- 14頭分を縦持ちに展開 (母系の牝馬もクロス判定に
     UNION ALL SELECT r_no, u_no, horse, ketto13_hanshoku_toroku_bango, ketto13_bamei FROM entry
     UNION ALL SELECT r_no, u_no, horse, ketto14_hanshoku_toroku_bango, ketto14_bamei FROM entry
 )
-SELECT r_no AS race_bango, u_no AS umaban, horse AS bamei, anc_name AS クロス馬, COUNT(*) AS 出現回数
+SELECT r_no AS race_bango, u_no AS umaban, horse AS bamei, TRIM(TRAILING '　' FROM anc_name) AS クロス馬, COUNT(*) AS 出現回数
 FROM anc
 WHERE hn IS NOT NULL AND TRIM(hn) NOT IN ('', '0000000000')
 GROUP BY r_no, u_no, horse, hn, anc_name
