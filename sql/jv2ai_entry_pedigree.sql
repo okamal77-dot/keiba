@@ -71,7 +71,8 @@ ORDER BY se.race_bango, se.umaban;
 -- STEP 3 (任意): 3代内のインブリード (同名馬が2回以上出現) を出走馬ごとに列挙
 -- =====================================================================
 WITH entry AS (
-    SELECT se.race_bango, se.umaban, se.bamei, um.*
+    -- um.* にも bamei 等があるため, 出走馬側の列は別名にして重複列エラーを避ける
+    SELECT se.race_bango AS r_no, se.umaban AS u_no, se.bamei AS horse, um.*
     FROM race_uma AS se
     JOIN uma AS um ON um.ketto_toroku_bango = se.ketto_toroku_bango
     WHERE se.kaisai_nen     = @kaisai_nen
@@ -80,24 +81,24 @@ WITH entry AS (
       AND (@race_bango IS NULL OR se.race_bango = @race_bango)
 ),
 anc AS (  -- 14頭分を縦持ちに展開 (母系の牝馬もクロス判定に含める)
-              SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_1  AS hn, ketto3_bamei_1  AS anc_name FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_2,  ketto3_bamei_2  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_3,  ketto3_bamei_3  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_4,  ketto3_bamei_4  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_5,  ketto3_bamei_5  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_6,  ketto3_bamei_6  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_7,  ketto3_bamei_7  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_8,  ketto3_bamei_8  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_9,  ketto3_bamei_9  FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_10, ketto3_bamei_10 FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_11, ketto3_bamei_11 FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_12, ketto3_bamei_12 FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_13, ketto3_bamei_13 FROM entry
-    UNION ALL SELECT race_bango, umaban, bamei, ketto3_hanshoku_toroku_bango_14, ketto3_bamei_14 FROM entry
+              SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_1  AS hn, ketto3_bamei_1  AS anc_name FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_2,  ketto3_bamei_2  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_3,  ketto3_bamei_3  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_4,  ketto3_bamei_4  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_5,  ketto3_bamei_5  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_6,  ketto3_bamei_6  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_7,  ketto3_bamei_7  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_8,  ketto3_bamei_8  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_9,  ketto3_bamei_9  FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_10, ketto3_bamei_10 FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_11, ketto3_bamei_11 FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_12, ketto3_bamei_12 FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_13, ketto3_bamei_13 FROM entry
+    UNION ALL SELECT r_no, u_no, horse, ketto3_hanshoku_toroku_bango_14, ketto3_bamei_14 FROM entry
 )
-SELECT race_bango, umaban, bamei, anc_name AS クロス馬, COUNT(*) AS 出現回数
+SELECT r_no AS race_bango, u_no AS umaban, horse AS bamei, anc_name AS クロス馬, COUNT(*) AS 出現回数
 FROM anc
 WHERE hn IS NOT NULL AND TRIM(hn) NOT IN ('', '0000000000')
-GROUP BY race_bango, umaban, bamei, hn, anc_name
+GROUP BY r_no, u_no, horse, hn, anc_name
 HAVING COUNT(*) >= 2
-ORDER BY race_bango, umaban;
+ORDER BY r_no, u_no;
