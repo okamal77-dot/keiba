@@ -40,3 +40,9 @@ WHERE se.kaisai_nen = @kaisai_nen AND se.kaisai_gappi = @kaisai_gappi
   AND um.ketto_toroku_bango IS NULL
 ORDER BY se.keibajo_code, se.race_bango, se.umaban
 LIMIT 20;
+
+-- #E 同じテーブルが別のデータベース(スキーマ)に作られていないか (再取込先の確認)
+SELECT table_schema, table_name, table_rows, create_time, update_time
+FROM information_schema.tables
+WHERE table_name IN ('umagoto_race_joho', 'kyosoba_master2')
+ORDER BY update_time DESC;
