@@ -3,7 +3,7 @@
 -- 前提: JV-Data の SE(馬毎レース情報) と UM(競走馬マスタ) を JV2AI で取り込み済み.
 --   出走馬テーブル  umagoto_race_joho : SE レコード (1行 = 1レース1頭)
 --   競走馬マスタ    kyosoba_master2   : UM レコード (ketto1〜14_bamei / ketto1〜14_hanshoku_toroku_bango)
--- 血統関連の列名は STEP 0 の結果で確認済み. レース特定用の列 (kaisai_nen 等) は STEP 0b で確認.
+-- テーブル名・列名は STEP 0 / 0b の結果で確認済み (STEP 0 系は再実行不要).
 -- UM の3代血統の並び順 (JV-Data仕様):
 --   1:父 2:母 3:父父 4:父母 5:母父 6:母母 7:父父父 8:父父母
 --   9:父母父 10:父母母 11:母父父 12:母父母 13:母母父 14:母母母
@@ -18,8 +18,7 @@ WHERE table_schema = DATABASE()
     OR column_comment REGEXP '血統|繁殖|馬名')
 ORDER BY table_name, ordinal_position;
 
--- STEP 0b: umagoto_race_joho のレース特定用の列名を確認 (STEP 1-3 の kaisai_nen, kaisai_tsukihi,
---          keibajo_code, race_bango, wakuban, umaban と違う場合は置換する)
+-- STEP 0b: umagoto_race_joho の列一覧 (レース特定用の列名の確認用)
 SELECT column_name
 FROM information_schema.columns
 WHERE table_schema = DATABASE() AND table_name = 'umagoto_race_joho'
@@ -29,7 +28,7 @@ ORDER BY ordinal_position;
 -- STEP 1: 抽出条件
 -- =====================================================================
 SET @kaisai_nen     = '2026';   -- 開催年 (YYYY)
-SET @kaisai_tsukihi = '1004';   -- 開催月日 (MMDD)
+SET @kaisai_gappi = '1004';   -- 開催月日 (MMDD)
 SET @keibajo_code   = '06';     -- 競馬場コード (01札幌 02函館 03福島 04新潟 05東京 06中山 07中京 08京都 09阪神 10小倉)
 SET @race_bango     = NULL;     -- レース番号 ('11' 等). NULL なら当日全レース
 
@@ -38,7 +37,7 @@ SET @race_bango     = NULL;     -- レース番号 ('11' 等). NULL なら当日
 -- =====================================================================
 SELECT
     se.kaisai_nen,
-    se.kaisai_tsukihi,
+    se.kaisai_gappi,
     se.keibajo_code,
     se.race_bango,
     se.wakuban,
@@ -69,7 +68,7 @@ FROM umagoto_race_joho AS se
 LEFT JOIN kyosoba_master2 AS um   -- マスタ未取込の馬も出走馬として残す
        ON um.ketto_toroku_bango = se.ketto_toroku_bango
 WHERE se.kaisai_nen     = @kaisai_nen
-  AND se.kaisai_tsukihi = @kaisai_tsukihi
+  AND se.kaisai_gappi = @kaisai_gappi
   AND se.keibajo_code   = @keibajo_code
   AND (@race_bango IS NULL OR se.race_bango = @race_bango)
 ORDER BY se.race_bango, se.umaban;
@@ -83,7 +82,7 @@ WITH entry AS (
     FROM umagoto_race_joho AS se
     JOIN kyosoba_master2 AS um ON um.ketto_toroku_bango = se.ketto_toroku_bango
     WHERE se.kaisai_nen     = @kaisai_nen
-      AND se.kaisai_tsukihi = @kaisai_tsukihi
+      AND se.kaisai_gappi = @kaisai_gappi
       AND se.keibajo_code   = @keibajo_code
       AND (@race_bango IS NULL OR se.race_bango = @race_bango)
 ),
