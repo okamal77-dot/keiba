@@ -1,4 +1,4 @@
-"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2023〜2025年・地方15場）.
+"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2023〜2026年9月・地方15場）.
 
 要因: 人気 / 走破タイム(持ち時計・前走指数) / 上がり3F / 脚質 / 馬体重増減 /
       騎手との相性(コンビ成績・乗り替わり) / 天候 / 馬場状態 / 転厩・遠征
@@ -7,7 +7,7 @@
 「同じ競馬場・同じ人気・同じ頭数帯の平均3着内率」から計算した期待値と比べる (A/E 比).
 A/E > 1 なら人気以上に馬券に絡んでいる.
 
-入力: data/{年}_horselist_全月まとめ.csv, data/race{年}.csv, data/pay{年}.csv (年 = YEARS)
+入力: data/ 配下の出走馬・レース一覧・払戻 CSV (FILES), 2026年9月の確定オッズ data/odds/202609_*_odds.csv
 出力: analysis/out/tf_*.csv
 """
 import re
@@ -26,7 +26,15 @@ ORDER = ["帯広ば", "大井", "川崎", "浦和", "船橋", "名古屋", "笠�
 HOME = {"帯広ば": "ばんえい", "名古屋": "愛知", "園田": "兵庫", "姫路": "兵庫", "門別": "北海道",
         "盛岡": "岩手", "水沢": "岩手"}  # 他は競馬場名 = 所属名
 BABA = ["良", "稍重", "重", "不良"]
-YEARS = [2023, 2024, 2025]
+FILES = {  # 年: (出走馬, レース一覧, 払戻) のファイル名リスト
+    2023: (["2023_horselist_全月まとめ.csv"], ["race2023.csv"], ["pay2023.csv"]),
+    2024: (["2024_horselist_全月まとめ.csv"], ["race2024.csv"], ["pay2024.csv"]),
+    2025: (["2025_horselist_全月まとめ.csv"], ["race2025.csv"], ["pay2025.csv"]),
+    2026: (["2026_horselist_1-8月まとめ.csv", "202609_horselist.csv"],
+           ["race2026.csv", "202609_racelist.csv"], ["pay2026.csv", "202609_payback.csv"]),
+}
+YEARS = list(FILES)
+ODDS_MONTH = 202609  # 確定オッズがある月 (オッズで補正した検証に使う)
 
 
 def read(name, **kw):
@@ -87,9 +95,8 @@ def baba_group(row):
 
 
 def load():
-    h = pd.concat([read(f"{y}_horselist_全月まとめ.csv") for y in YEARS], ignore_index=True)
-    r = pd.concat([read(f"race{y}.csv") for y in YEARS], ignore_index=True).drop_duplicates(KEY)
-    p = pd.concat([read(f"pay{y}.csv") for y in YEARS], ignore_index=True).drop_duplicates(KEY)
+    h, r, p = (pd.concat([read(f) for y in YEARS for f in FILES[y][i]], ignore_index=True) for i in range(3))
+    r, p = r.drop_duplicates(KEY), p.drop_duplicates(KEY)
     h = h.drop_duplicates(KEY + ["馬番"])
     for c in ["着順", "人気", "上がり3F", "タイム", "馬体重増減", "馬番"]:
         h[c] = pd.to_numeric(h[c], errors="coerce")
@@ -254,13 +261,13 @@ def main():
             out[f"A/E_{y}"] = yy["A/E"]
             out[f"n_{y}"] = yy["n"]
         ye = out[[f"A/E_{y}" for y in YEARS]]
-        out["3年同方向"] = ((ye > 1).all(axis=1) & (out["A/E"] > 1)) | ((ye < 1).all(axis=1) & (out["A/E"] < 1))
+        out["全年同方向"] = ((ye > 1).all(axis=1) & (out["A/E"] > 1)) | ((ye < 1).all(axis=1) & (out["A/E"] < 1))
         res[f] = out
         save(f"tf_ae_{f.split('(')[0]}", out.round(3), show=False)
         print(f"\n== {f}: 全場")
         print(t.round(2).to_string())
         print(a["A/E"].unstack().reindex(ORDER).round(2).to_string())
-        print(out.loc[out["3年同方向"] & (out["n"] >= 100)].index.tolist())
+        print(out.loc[out["全年同方向"] & (out["n"] >= 100)].index.tolist())
 
     # ===== 4. 天候・馬場状態 =====
     races = h.drop_duplicates(KEY)[KEY + ["天候", "馬場G"]]
@@ -294,15 +301,18 @@ def main():
     fv = h[h["人気"] == 1].groupby(["競馬場", "馬場G"])["top3"].mean().unstack() * 100
     save("tf_baba_fav", fv.reindex(ORDER), show=False)
 
-    # ===== 5. 要因の重要度ランキング (競馬場別, |A/E-1| 最大のカテゴリ, n>=100) =====
+    # ===== 5. 確定オッズで補正した検証 (オッズがある月のみ, 全場) =====
+    odds_check(h, c)
+
+    # ===== 6. 要因の重要度ランキング (競馬場別, |A/E-1| 最大のカテゴリ, n>=100) =====
     rows = []
     for f, t in res.items():
         t = t[(t["n"] >= 100) & (t.index.get_level_values(1) != "データなし")]
         for (k, cat), v in t.iterrows():
             rows.append((k, f, cat, v["n"], v["3着内率"], v["A/E"], v["z"],
-                         *[v[f"A/E_{y}"] for y in YEARS], v["3年同方向"]))
+                         *[v[f"A/E_{y}"] for y in YEARS], v["全年同方向"]))
     rk = pd.DataFrame(rows, columns=["競馬場", "要因", "カテゴリ", "n", "3着内率", "A/E", "z"]
-                      + [f"A/E_{y}" for y in YEARS] + ["3年同方向"])
+                      + [f"A/E_{y}" for y in YEARS] + ["全年同方向"])
     sig = rk[rk["z"].abs() >= 2.5].copy()
     sig["強さ"] = (sig["A/E"] - 1).abs()
     sig = sig.sort_values(["競馬場", "強さ"], ascending=[True, False])
@@ -310,6 +320,42 @@ def main():
     for k in ["全場"] + ORDER:
         print(f"\n## {k}")
         print(sig[sig["競馬場"] == k].head(14).round(2).to_string(index=False))
+
+
+def odds_check(h, c):
+    """人気順位の代わりに確定単勝オッズで期待3着内率を作り, 要因の A/E を比べる.
+
+    期待値 = 単勝オッズから出した勝率 (1/オッズ をレース内で合計1に正規化) の帯 × 頭数帯 の平均3着内率.
+    人気順位より細かく市場の評価を差し引くので, ここでも A/E が 1 から離れる要因は
+    「オッズにも織り込まれていない」ことになる.
+    """
+    files = sorted((DATA / "odds").glob(f"{ODDS_MONTH}_*_odds.csv"))
+    if not files:
+        return
+    o = pd.concat([read(f"odds/{f.name}", usecols=KEY + ["賭式", "番号1", "オッズ"]) for f in files])
+    o = o[o["賭式"] == "単勝"].rename(columns={"番号1": "馬番", "オッズ": "単勝オッズ"}).drop(columns="賭式")
+    o["馬番"] = pd.to_numeric(o["馬番"], errors="coerce")
+    m = h["競走年月日"] // 100 == ODDS_MONTH
+    x = h[m].reset_index().merge(o, on=KEY + ["馬番"], how="inner").set_index("index")
+    x = x[x["単勝オッズ"] > 0]
+    x["勝率"] = 1 / x["単勝オッズ"]
+    x["勝率"] /= x.groupby(KEY)["勝率"].transform("sum")
+    x["勝率帯"] = pd.qcut(x["勝率"], 25, duplicates="drop")
+    x["期待_人気"] = x["期待"]
+    x["期待"] = x.groupby(["勝率帯", "頭数帯"], observed=True)["top3"].transform("mean")
+    x["全場"] = "全場"
+    rows = []
+    for f in ["近3走ベスト指数順位(レース内)", "持ち時計順位(レース内)", "前走上がり3F順位", "前走脚質",
+              "馬体重増減", "騎手コンビ", "乗り替わり", "転厩・遠征"]:
+        a = ae_table(x, c.loc[x.index, f], by="全場")
+        b = ae_table(x.assign(期待=x["期待_人気"]), c.loc[x.index, f], by="全場")
+        t = a[["n", "3着内率", "A/E", "z"]].rename(columns={"A/E": "A/E_オッズ補正", "z": "z_オッズ補正"})
+        t["A/E_人気補正"] = b["A/E"]
+        t.index = pd.MultiIndex.from_tuples([(f, k[1]) for k in t.index], names=["要因", "カテゴリ"])
+        rows.append(t)
+    out = pd.concat(rows)
+    print(f"\n== オッズ補正 ({ODDS_MONTH}, {x.groupby(KEY).ngroups}レース, {len(x)}頭)")
+    save("tf_odds_check", out.round(3))
 
 
 def save(name, df, show=True):
