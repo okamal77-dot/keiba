@@ -1,4 +1,4 @@
-"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2025年・地方15場）.
+"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2023〜2025年・地方15場）.
 
 要因: 人気 / 走破タイム(持ち時計・前走指数) / 上がり3F / 脚質 / 馬体重増減 /
       騎手との相性(コンビ成績・乗り替わり) / 天候 / 馬場状態 / 転厩・遠征
@@ -7,7 +7,7 @@
 「同じ競馬場・同じ人気・同じ頭数帯の平均3着内率」から計算した期待値と比べる (A/E 比).
 A/E > 1 なら人気以上に馬券に絡んでいる.
 
-入力: data/2025_horselist_全月まとめ.csv, data/race2025.csv, data/pay2025.csv
+入力: data/{年}_horselist_全月まとめ.csv, data/race{年}.csv, data/pay{年}.csv (年 = YEARS)
 出力: analysis/out/tf_*.csv
 """
 import re
@@ -26,6 +26,7 @@ ORDER = ["帯広ば", "大井", "川崎", "浦和", "船橋", "名古屋", "笠�
 HOME = {"帯広ば": "ばんえい", "名古屋": "愛知", "園田": "兵庫", "姫路": "兵庫", "門別": "北海道",
         "盛岡": "岩手", "水沢": "岩手"}  # 他は競馬場名 = 所属名
 BABA = ["良", "稍重", "重", "不良"]
+YEARS = [2023, 2024, 2025]
 
 
 def read(name, **kw):
@@ -86,20 +87,24 @@ def baba_group(row):
 
 
 def load():
-    h = read("2025_horselist_全月まとめ.csv")
-    r = read("race2025.csv").drop_duplicates(KEY)
-    p = read("pay2025.csv").drop_duplicates(KEY)
+    h = pd.concat([read(f"{y}_horselist_全月まとめ.csv") for y in YEARS], ignore_index=True)
+    r = pd.concat([read(f"race{y}.csv") for y in YEARS], ignore_index=True).drop_duplicates(KEY)
+    p = pd.concat([read(f"pay{y}.csv") for y in YEARS], ignore_index=True).drop_duplicates(KEY)
+    h = h.drop_duplicates(KEY + ["馬番"])
     for c in ["着順", "人気", "上がり3F", "タイム", "馬体重増減", "馬番"]:
         h[c] = pd.to_numeric(h[c], errors="coerce")
     h["馬体重"] = pd.to_numeric(h["馬体重"], errors="coerce")
     h = h[h["着順"].notna() & h["人気"].notna()].copy()       # 取消・除外・中止を除く
     r["馬場G"] = r.apply(baba_group, axis=1)
+    # 2023年の船橋は全レース「良」で記録されており馬場データとして使えない
+    r.loc[(r["競馬場"] == "船橋") & (r["競走年月日"] // 10000 == 2023), "馬場G"] = np.nan
     h = h.merge(r[KEY + ["距離", "天候", "馬場", "馬場G", "競走種類名称"]], on=KEY, how="left")
     h["頭数"] = h.groupby(KEY)["馬番"].transform("size")
     h = h[h["頭数"] >= 5]
     h = h[h.set_index(KEY).index.isin(p.set_index(KEY).index)]   # 払戻のあるレース
     h["top3"] = (h["着順"] <= 3).astype(int)
     h["日付"] = pd.to_datetime(h["競走年月日"].astype(str))
+    h["年"] = h["日付"].dt.year
     h["馬ID"] = h["馬名"] + "_" + h["生年月日"].astype(str)
     st = styles(r)
     h = h.merge(st, on=KEY + ["馬番"], how="left")
@@ -162,7 +167,7 @@ def cat_features(h):
          h["前走調教師所属"].notna() & (h["前走調教師所属"] != h["調教師所属"]),
          h["前走調教師"].notna() & (h["前走調教師"] != h["調教師"]),
          h["前走調教師"].isna() & (h["当場出走数"] == 0) & (h["全出走数"] > 0)],
-        ["遠征馬(他地区所属)", "他地区から転入初戦", "同地区内の転厩初戦", "当場初出走(2025初登場)"], "通常")
+        ["遠征馬(他地区所属)", "他地区から転入初戦", "同地区内の転厩初戦", "当場初出走(データ内初登場)"], "通常")
     c["転厩・遠征"] = tr
     c["前走から"] = np.select(
         [h["前走競馬場"].isna(), h["前走競馬場"] == h["競馬場"]], ["前走なし", "同場"], "他場から")
@@ -186,7 +191,7 @@ def main():
     # 期待3着内率: 競馬場 × 人気(10以上まとめ) × 頭数帯
     h["人気c"] = h["人気"].clip(upper=10)
     h["頭数帯"] = pd.cut(h["頭数"], [0, 8, 10, 12, 99])
-    h["期待"] = h.groupby(["競馬場", "人気c", "頭数帯"], observed=True)["top3"].transform("mean")
+    h["期待"] = h.groupby(["年", "競馬場", "人気c", "頭数帯"], observed=True)["top3"].transform("mean")
     c = cat_features(h)
     h["全場"] = "全場"
     print("対象レース数", h.groupby(KEY).ngroups, "出走頭数", len(h))
@@ -207,6 +212,9 @@ def main():
     pop_sum = rp.groupby("競馬場")[["上位3人気で決着", "上位5人気で決着", "6番人気以下が絡む", "1番人気が絡む"]].mean() * 100
     pop_sum["人気合計中央値"] = rp.groupby("競馬場")["人気合計"].median()
     pop_sum["レース数"] = rp.groupby("競馬場").size()
+    rp["年"] = rp["競走年月日"] // 10000
+    for y in YEARS:
+        pop_sum[f"6番人気以下が絡む{y}"] = rp[rp["年"] == y].groupby("競馬場")["6番人気以下が絡む"].mean() * 100
     pop = pd.concat([pop_sum, comp], axis=1).reindex(ORDER)
     save("tf_pop_summary", pop)
     save("tf_pop_top3rate", pop_rate.reindex(ORDER))
@@ -239,12 +247,20 @@ def main():
               "馬体重増減", "騎手コンビ", "乗り替わり", "転厩・遠征", "前走から"]:
         a = ae_table(h, c[f])
         t = ae_table(h, c[f], by="全場")
-        res[f] = pd.concat([t, a])
         out = pd.concat([t, a])
+        for y in YEARS:  # 年ごとの A/E (再現性の確認)
+            m = h["年"] == y
+            yy = pd.concat([ae_table(h[m], c.loc[m, f], by="全場"), ae_table(h[m], c.loc[m, f])])
+            out[f"A/E_{y}"] = yy["A/E"]
+            out[f"n_{y}"] = yy["n"]
+        ye = out[[f"A/E_{y}" for y in YEARS]]
+        out["3年同方向"] = ((ye > 1).all(axis=1) & (out["A/E"] > 1)) | ((ye < 1).all(axis=1) & (out["A/E"] < 1))
+        res[f] = out
         save(f"tf_ae_{f.split('(')[0]}", out.round(3), show=False)
         print(f"\n== {f}: 全場")
         print(t.round(2).to_string())
         print(a["A/E"].unstack().reindex(ORDER).round(2).to_string())
+        print(out.loc[out["3年同方向"] & (out["n"] >= 100)].index.tolist())
 
     # ===== 4. 天候・馬場状態 =====
     races = h.drop_duplicates(KEY)[KEY + ["天候", "馬場G"]]
@@ -254,6 +270,10 @@ def main():
         六番人気以下が絡む=("6番人気以下が絡む", "mean"), 一番人気が絡む=("1番人気が絡む", "mean"),
         人気合計中央値=("人気合計", "median"))
     bb[["上位3人気で決着", "六番人気以下が絡む", "一番人気が絡む"]] *= 100
+    rp2["年"] = rp2["競走年月日"] // 10000
+    for y in YEARS:
+        bb[f"六番人気以下が絡む{y}"] = rp2[rp2["年"] == y].groupby(["競馬場", "馬場G"])["6番人気以下が絡む"].mean() * 100
+        bb[f"レース数{y}"] = rp2[rp2["年"] == y].groupby(["競馬場", "馬場G"]).size()
     save("tf_baba_pop", bb, show=False)
     rp2["天候G"] = rp2["天候"].replace({"小雨": "雨", "小雪": "雪/雨", "雪": "雪/雨"}).replace({"雨": "雨・雪"}).replace({"雪/雨": "雨・雪"})
     wt = rp2.groupby(["競馬場", "天候G"]).agg(
@@ -279,15 +299,17 @@ def main():
     for f, t in res.items():
         t = t[(t["n"] >= 100) & (t.index.get_level_values(1) != "データなし")]
         for (k, cat), v in t.iterrows():
-            rows.append((k, f, cat, v["n"], v["3着内率"], v["A/E"], v["z"]))
-    rk = pd.DataFrame(rows, columns=["競馬場", "要因", "カテゴリ", "n", "3着内率", "A/E", "z"])
+            rows.append((k, f, cat, v["n"], v["3着内率"], v["A/E"], v["z"],
+                         *[v[f"A/E_{y}"] for y in YEARS], v["3年同方向"]))
+    rk = pd.DataFrame(rows, columns=["競馬場", "要因", "カテゴリ", "n", "3着内率", "A/E", "z"]
+                      + [f"A/E_{y}" for y in YEARS] + ["3年同方向"])
     sig = rk[rk["z"].abs() >= 2.5].copy()
     sig["強さ"] = (sig["A/E"] - 1).abs()
     sig = sig.sort_values(["競馬場", "強さ"], ascending=[True, False])
     sig.to_csv(OUT / "tf_significant.csv", index=False, encoding="utf-8-sig")
     for k in ["全場"] + ORDER:
         print(f"\n## {k}")
-        print(sig[sig["競馬場"] == k].head(12).round(2).to_string(index=False))
+        print(sig[sig["競馬場"] == k].head(14).round(2).to_string(index=False))
 
 
 def save(name, df, show=True):
