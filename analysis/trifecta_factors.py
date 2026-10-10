@@ -1,4 +1,4 @@
-"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2023〜2026年9月・地方15場）.
+"""3連単の的中馬（1〜3着馬）と各要因の関連性分析（2023〜2026年10月・地方15場）.
 
 要因: 人気 / 走破タイム(持ち時計・前走指数) / 上がり3F / 脚質 / 馬体重増減 /
       騎手との相性(コンビ成績・乗り替わり) / 天候 / 馬場状態 / 転厩・遠征
@@ -30,8 +30,9 @@ FILES = {  # 年: (出走馬, レース一覧, 払戻) のファイル名リス�
     2023: (["2023_horselist_全月まとめ.csv"], ["race2023.csv"], ["pay2023.csv"]),
     2024: (["2024_horselist_全月まとめ.csv"], ["race2024.csv"], ["pay2024.csv"]),
     2025: (["2025_horselist_全月まとめ.csv"], ["race2025.csv"], ["pay2025.csv"]),
-    2026: (["2026_horselist_1-8月まとめ.csv", "202609_horselist.csv"],
-           ["race2026.csv", "202609_racelist.csv"], ["pay2026.csv", "202609_payback.csv"]),
+    2026: (["2026_horselist_1-8月まとめ.csv", "202609_horselist.csv", "202610_horselist.csv"],
+           ["race2026.csv", "202609_racelist.csv", "202610_racelist.csv"],
+           ["pay2026.csv", "202609_payback.csv", "202610_payback.csv"]),
 }
 YEARS = list(FILES)
 ODDS_MONTH = 202609  # 確定オッズがある月 (オッズで補正した検証に使う)
