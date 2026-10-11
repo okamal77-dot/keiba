@@ -7,6 +7,8 @@
        + 前走の着差, 昇級・降級 (賞金比), 調教師の成績, 通算勝率                    ... 第14節
        + クラス変化 (前走から / 4走前から), 近4走平均着順, 割引・加点の組み合わせ   ... 第16節
 対象場の 2024年1月〜検証開始前で学習し, 直近3か月で predict_race.py の旧モデルと比較 → 全期間で再学習して予想.
+過小評価候補: 勝率順位5位以内なのに想定人気 (同じ項目で人気の順番を予測したモデル, 実際の人気が分かればそれ) が
+             勝率順位より2つ以上低い馬 (消し条件は除く). 直近3か月で実際の人気に対する A/E を検証して表示する.
 出力: analysis/out/pred2_<日付>_<競馬場>.csv
 """
 import sys
@@ -16,11 +18,13 @@ import pandas as pd
 
 import ability_index as A
 import class_change as C
+import favorite_drivers as F
 import favorite_extra as X
 import predict_race as P
 import trifecta_factors as T
 
 KEY = T.KEY
+UR_RANK, UR_GAP = 5, 2  # 過小評価候補: 勝率順位 UR_RANK 位以内, 想定人気が勝率順位より UR_GAP 以上低い
 
 
 def class_features(h):
@@ -122,9 +126,56 @@ def main():
     vt = pd.DataFrame(rows).set_index("モデル")
     print(f"== 検証 {course} {va['日付'].min():%Y-%m}〜{va['日付'].max():%Y-%m}\n", vt.round(3).to_string())
 
+    # ---- 過小評価候補: 勝率順位が上位なのに, 想定人気 (データから予測した人気順) が3つ以上低い馬 ----
+    d["人気c"] = d["人気"].clip(upper=10)
+    d["頭数帯"] = pd.cut(d["頭数"], [0, 8, 10, 12, 99])
+    gk = d.groupby(["年", "人気c", "頭数帯"], observed=True)
+    d["期待"] = gk["top3"].transform("mean")
+    d["期待勝"] = gk["着順"].transform(lambda s: (s == 1).mean())
+
+    def ranks(sub, f, bw, mw, sw, bp, mp, sp):
+        Xs, Ms, _, rix = P.pad(sub, f.loc[sub.index], with_order=False)
+        pw = P.win_probs(Xs, Ms, bw, mw, sw)
+        pp = P.win_probs(Xs, Ms, bp, mp, sp)
+        out = pd.DataFrame(index=sub.index, columns=["勝率", "勝率順", "想定人気"], dtype=float)
+        for i, ix in enumerate(rix):
+            k = len(ix)
+            out.loc[ix, "勝率"] = pw[i, :k]
+            out.loc[ix, "勝率順"] = (-pw[i, :k]).argsort().argsort() + 1
+            out.loc[ix, "想定人気"] = (-pp[i, :k]).argsort().argsort() + 1
+        return out
+
+    def underrated(sub, r, rank_max=UR_RANK, gap=UR_GAP):
+        kesi = (sub["指数順"] >= 6) & (sub["前走脚質"] == "追込")
+        return (r["勝率順"] <= rank_max) & (r["想定人気"] >= r["勝率順"] + gap) & ~kesi
+
+    Xt, Mt, Ot, _ = P.pad(tr, f_new.loc[tr.index])
+    bw, mw, sw = P.fit(Xt, Mt, Ot)
+    Xt, Mt, Ot, _ = P.pad(F.order_by(tr, "人気"), f_new.loc[tr.index])
+    bp, mp, sp = P.fit(Xt, Mt, Ot)
+    rv = ranks(va, f_new, bw, mw, sw, bp, mp, sp)
+    vr = d.loc[va.index, ["競馬場", "競走年月日", "レース番号", "馬番", "人気", "着順", "top3", "期待", "期待勝"]].join(rv)
+    vr["消し"] = ((va["指数順"] >= 6) & (va["前走脚質"] == "追込")).values
+    vr.to_csv(T.OUT / f"pred2_underrated_rows_{course}.csv", index=False, encoding="utf-8-sig")
+    fl = underrated(va, rv)
+    x = d.loc[va.index][fl]
+    ur = pd.Series({"該当頭数": len(x), "平均の実際の人気": x["人気"].mean(),
+                    "勝率%": (x["着順"] == 1).mean() * 100, "3着内率%": (x["top3"] == 1).mean() * 100,
+                    "勝ちA/E(実際の人気比)": (x["着順"] == 1).sum() / x["期待勝"].sum(),
+                    "3着内A/E(実際の人気比)": x["top3"].sum() / x["期待"].sum()})
+    print("\n== 過小評価候補の検証 (直近3か月)\n", ur.round(2).to_string())
+    ur.to_csv(T.OUT / f"pred2_underrated_valid_{course}.csv", encoding="utf-8-sig")
+
+    Xt, Mt, Ot, _ = P.pad(F.order_by(hist, "人気"), f_new.loc[hist.index])
+    bp, mp, sp = P.fit(Xt, Mt, Ot)
     Xt, Mt, Ot, _ = P.pad(hist, f_new.loc[hist.index])
     b, mu, sd = P.fit(Xt, Mt, Ot)
     tg = d[d["予想対象"]].sort_values(KEY + ["馬番"])
+    rt = ranks(tg, f_new, b, mu, sd, bp, mp, sp)
+    # 実際の人気が分かっていればそちらを使う
+    has_pop = tg["人気"].notna() & (tg.groupby(KEY)["人気"].transform("nunique") > 1)
+    rt.loc[has_pop, "想定人気"] = tg.loc[has_pop, "人気"]
+    rt["過小評価候補"] = underrated(tg, rt)
     Xv, Mv, _, races_ix = P.pad(tg, f_new.loc[tg.index], with_order=False)
     Pw = P.win_probs(Xv, Mv, b, mu, sd)
     out = []
@@ -156,6 +207,8 @@ def main():
                 "クラス変化": row["前走からの変化"], "近4走平均着順": None if pd.isna(row["近4走平均着順"]) else round(row["近4走平均着順"], 1),
                 "指数順": None if pd.isna(row["指数順"]) else int(row["指数順"]),
                 "位置取り": None if pd.isna(row["位置取り"]) else round(row["位置取り"], 2),
+                "想定人気": int(rt.loc[ix[j], "想定人気"]),
+                "過小評価候補": "★" if rt.loc[ix[j], "過小評価候補"] else "",
                 "注記": " / ".join(flags),
                 "買い目": f"[{kind}] {buy} ({npts}点, モデル上の的中確率 {hit*100:.0f}%)" if j == 0 else "",
             })
@@ -168,6 +221,9 @@ def main():
         print(f"\n## {k}R {g['レース名'].iloc[0]} {g['距離'].iloc[0]}m")
         print(g.sort_values("勝率%", ascending=False).drop(columns=["レース", "レース名", "距離", "買い目"]).to_string(index=False))
         print("買い目:", g["買い目"].iloc[0])
+        u = g[g["過小評価候補"] == "★"]
+        if len(u):
+            print("過小評価候補:", " / ".join(f"{r.馬番} {r.馬名} (勝率{r['勝率%']}%, 想定{r.想定人気}番人気)" for _, r in u.iterrows()))
 
 
 if __name__ == "__main__":

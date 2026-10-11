@@ -166,18 +166,17 @@ def pl_probs(w, pows=STAGE_POW):
 
 def suggest(w, tri, nos):
     """勝率の形から買い目を作り, モデル上の的中確率を返す.
-    本命の勝率 40%以上: ３連単 ◎ → 2〜5位 → 2〜5位 (12点) + 2位の勝率20%以上なら 2位 → ◎ → 3〜5位 (3点)
+    本命の勝率 40%以上 (本命が堅い): 単勝◎ (1点). 参考として ３連単 ◎ → 2・3位 → 2・3位 (2点) を併記
+        (３連単フォーメーションは当たっても配当が安く損が大きいため, バックテストで最も安定した単勝◎にする)
     25〜40%: ３連単 1・2位 → 1〜4位 → 1〜5位
     25%未満 (混戦): ３連複 1〜5位 BOX (10点)"""
     o = list((-w).argsort())
     n = nos
     if w[o[0]] >= 0.40:
-        combos = [(o[0], j, k) for j in o[1:5] for k in o[1:5] if j != k]
-        text = f"３連単 {n[o[0]]} → {','.join(map(str, n[o[1:5]]))} → {','.join(map(str, n[o[1:5]]))}"
-        if w[o[1]] >= 0.20:
-            combos += [(o[1], o[0], k) for k in o[2:5]]
-            text += f" ＋ {n[o[1]]} → {n[o[0]]} → {','.join(map(str, n[o[2:5]]))}"
-        return "軸1頭", text, len(combos), sum(tri[c] for c in combos)
+        ref = [(o[0], o[1], o[2]), (o[0], o[2], o[1])]
+        text = (f"単勝 {n[o[0]]}（参考: ３連単 {n[o[0]]} → {n[o[1]]},{n[o[2]]} → {n[o[1]]},{n[o[2]]} "
+                f"2点, 的中確率 {sum(tri[c] for c in ref)*100:.0f}%）")
+        return "本命", text, 1, w[o[0]]
     if w[o[0]] >= 0.25:
         combos = [(i, j, k) for i in o[:2] for j in o[:4] for k in o[:5] if len({i, j, k}) == 3]
         text = f"３連単 {','.join(map(str, n[o[:2]]))} → {','.join(map(str, n[o[:4]]))} → {','.join(map(str, n[o[:5]]))}"

@@ -2,7 +2,8 @@
 
 使い方: python3 analysis/review_day.py <data> <日付YYYYMMDD>
   analysis/out/pred_<日付>_*.csv (旧モデル) と pred2_<日付>_*.csv (改良版) を, data/ 配下の結果・払戻と突き合わせる.
-  買い目は予想時と同じ規則 (predict_race.suggest): 本命の勝率40%以上=軸1頭の３連単, 25-40%=2頭軸の３連単, それ未満=３連複5頭BOX.
+  買い目は predict_race.suggest と同じ規則: 本命の勝率40%以上=単勝◎, 25-40%=2頭軸の３連単, それ未満=３連複5頭BOX.
+  (2026年10月11日以前の予想時は 本命40%以上=軸1頭の３連単 だったが, 検証は新しい規則で行う)
 出力: analysis/out/review_<日付>.csv と標準出力の集計
 """
 import re
@@ -24,15 +25,12 @@ def tri_points(A, B, C):
 
 
 def bets(nos, w):
-    """predict_race.suggest と同じ規則で (３連単の組, ３連複BOXの馬) を返す"""
+    """predict_race.suggest と同じ規則で (３連単の組, ３連複BOXの馬, 単勝の馬) を返す"""
     if w[0] >= 0.40:
-        pts = tri_points([nos[0]], nos[1:5], nos[1:5])
-        if w[1] >= 0.20:
-            pts += tri_points([nos[1]], [nos[0]], nos[2:5])
-        return pts, []
+        return [], [], nos[0]
     if w[0] >= 0.25:
-        return tri_points(nos[:2], nos[:4], nos[:5]), []
-    return [], list(nos[:5])
+        return tri_points(nos[:2], nos[:4], nos[:5]), [], None
+    return [], list(nos[:5]), None
 
 
 def main():
@@ -64,7 +62,8 @@ def main():
             pos = x.set_index("馬番")["着順"]
             popn = x.set_index("馬番")["人気"]
             fav = x[x["人気"] == 1]
-            pts, box = bets(nos, w)
+            pts, box, tan = bets(nos, w)
+            tan_pay = pr["単勝払戻金（円）"] if tan is not None and int(pr["単勝組番"]) == tan else 0
             hit_t = win in pts
             hit_b = bool(box) and set(win) <= set(box)
             kesi = g[g["消し"].astype(str) == "True"]["馬番"].tolist() if "消し" in g else \
@@ -78,6 +77,7 @@ def main():
                 "３連単点数": len(pts), "３連単払戻": pr["３連単払戻金（円）"] if hit_t else 0,
                 "３連複点数": 10 if box else 0, "３連複払戻": pr["３連複払戻金（円）"] if hit_b else 0,
                 "単勝◎払戻": pr["単勝払戻金（円）"] if int(pr["単勝組番"]) == nos[0] else 0,
+                "推奨単勝点数": 1 if tan is not None else 0, "推奨単勝払戻": tan_pay,
             })
     t = pd.DataFrame(rows)
     t.to_csv(OUT / f"review_{date}.csv", index=False, encoding="utf-8-sig")
@@ -88,11 +88,15 @@ def main():
             "レース数": len(g), "◎の勝率%": (g["◎の着順"] == 1).mean() * 100, "◎の3着内率%": (g["◎の着順"] <= 3).mean() * 100,
             "1番人気の勝率%": (g["1番人気の着順"] == 1).mean() * 100, "1番人気の3着内率%": (g["1番人気の着順"] <= 3).mean() * 100,
             "◎が1番人気%": (g["◎の人気"] == 1).mean() * 100,
-            "単勝◎ 回収率%": g["単勝◎払戻"].sum() / (len(g) * 100) * 100,
+            "単勝◎ 回収率% (全レース)": g["単勝◎払戻"].sum() / (len(g) * 100) * 100,
+            "推奨単勝 的中": f"{(g['推奨単勝払戻'] > 0).sum()}/{g['推奨単勝点数'].sum()}",
+            "推奨単勝 回収率%": g["推奨単勝払戻"].sum() / max(g["推奨単勝点数"].sum() * 100, 1) * 100,
             "３連単 的中": f"{(g['３連単払戻'] > 0).sum()}/{(g['３連単点数'] > 0).sum()}",
             "３連単 回収率%": g["３連単払戻"].sum() / max(g["３連単点数"].sum() * 100, 1) * 100,
             "３連複 的中": f"{(g['３連複払戻'] > 0).sum()}/{(g['３連複点数'] > 0).sum()}",
             "３連複 回収率%": g["３連複払戻"].sum() / max(g["３連複点数"].sum() * 100, 1) * 100,
+            "推奨買い目 合計回収率%": (g["推奨単勝払戻"].sum() + g["３連単払戻"].sum() + g["３連複払戻"].sum())
+            / max((g["推奨単勝点数"].sum() + g["３連単点数"].sum() + g["３連複点数"].sum()) * 100, 1) * 100,
             "消しの3着内": f"{g['消しの3着内'].sum()}/{g['消し該当'].sum()}",
         })
     s = t.groupby(["モデル", "競馬場"]).apply(summ)
