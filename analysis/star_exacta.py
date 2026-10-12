@@ -4,6 +4,7 @@
   ◎ = 勝率1位, ○▲ = 勝率2・3位, ★ = 消し以外で 勝率順5位以内 かつ 人気が勝率順より2つ以上下.
   ★の人気は 想定人気 (発売前) と 確定人気 の2通りで判定する.
 買い方 (1点100円, 払戻は確定値):
+  単勝◎ / 馬連 ◎-○ / 馬連 ◎-★ / 単勝◎＋馬連 ◎-○ / 単勝◎＋馬連 ◎-★ /
   単勝◎ / 馬単 ◎→○ / 馬単 ◎→★ / ３連単 ◎→○▲→○▲ / ３連単 ◎→○▲★→○▲★ / ３連単 ◎→★→全 / ３連単 ◎→全→★
 出力: analysis/out/star_exacta_*.csv
 """
@@ -25,6 +26,7 @@ def pays():
         try:
             e["tan"] = (int(d["単勝組番"]), d["単勝払戻金（円）"])
             e["uma"] = ((int(d["馬単組番1"]), int(d["馬単組番2"])), d["馬単払戻金（円）"])
+            e["umaren"] = (tuple(sorted((int(d["馬複組番1"]), int(d["馬複組番2"])))), d["馬複払戻金（円）"])
             e["tri"] = ((int(d["３連単組番馬番1"]), int(d["３連単組番馬番2"]), int(d["３連単組番馬番3"])),
                         d["３連単払戻金（円）"])
         except (ValueError, TypeError):
@@ -45,16 +47,20 @@ def main():
         n = len(h)
         hon, sub = h[0], h[1:3]
         p = P[k]
-        win, ex, tri = p["tan"], p["uma"], p["tri"]
+        win, ex, tri, ren = p["tan"], p["uma"], p["tri"], p["umaren"]
         for basis in ("想定人気", "人気"):
             star = g[(~g["消し"]) & (g["勝率順"] <= 5) & (g[basis] >= g["勝率順"] + 2) & (g["馬番"] != hon)]["馬番"].astype(int).tolist()
             r = {"競馬場": k[0], "日付": k[1], "R": k[2], "判定": basis, "◎勝率": g["勝率"].iloc[0], "頭数": n,
                  "★数": len(star), "◎の着順": g["着順"].iloc[0],
-                 "★が2着": ex[0][1] in star, "★が3着内": any(x in star for x in tri[0][1:])}
+                 "◎が1番人気": g["人気"].iloc[0] == 1, "★が2着": ex[0][1] in star, "★が3着内": any(x in star for x in tri[0][1:])}
             bets = {
                 "単勝◎": [("tan", hon)],
                 "馬単 ◎→○": [("uma", (hon, sub[0]))],
                 "馬単 ◎→★": [("uma", (hon, s)) for s in star],
+                "馬連 ◎-○": [("ren", tuple(sorted((hon, sub[0]))))],
+                "馬連 ◎-★": [("ren", tuple(sorted((hon, x)))) for x in star],
+                "単勝◎＋馬連 ◎-○": [("tan", hon), ("ren", tuple(sorted((hon, sub[0]))))],
+                "単勝◎＋馬連 ◎-★": [("tan", hon)] + [("ren", tuple(sorted((hon, x)))) for x in star],
                 "３連単 ◎→○▲→○▲": [("tri", (hon, a, b)) for a in sub for b in sub if a != b],
                 "３連単 ◎→○▲★→○▲★": [("tri", (hon, a, b)) for a in sub + star for b in sub + star if a != b],
                 "３連単 ◎→★→全": [("tri", (hon, s, x)) for s in star for x in h if x not in (hon, s)],
@@ -68,6 +74,8 @@ def main():
                         ret += win[1]
                     if typ == "uma" and c == ex[0]:
                         ret += ex[1]
+                    if typ == "ren" and c == ren[0]:
+                        ret += ren[1]
                     if typ == "tri" and c == tri[0]:
                         ret += tri[1]
                 r[name + "|点数"] = len(bl)
@@ -99,10 +107,14 @@ def main():
     pd.set_option("display.max_columns", 60)
     print(t.round(1).T.to_string())
     print(c[[col for col in c.columns if "★" in col or col == "レース数"]].round(0).to_string())
+    s2 = d[d["◎勝率"] >= 0.4].groupby(["判定", "◎勝率帯", "◎が1番人気"], observed=True).apply(summ)
+    s2.to_csv(T.OUT / "star_exacta_by_fav.csv", encoding="utf-8-sig")
+    cols = ["レース数", "◎勝率%"] + [c for c in s2.columns if any(k in c for k in ["単勝◎ 回収", "馬連", "単勝◎＋"])]
+    print(s2[cols].round(1).to_string())
     # 大当たりを除いた頑健性
     for basis in ("想定人気", "人気"):
         x = d[(d["判定"] == basis) & (d["◎勝率"] >= 0.4)]
-        for b in ["馬単 ◎→★", "３連単 ◎→★→全"]:
+        for b in ["馬単 ◎→★", "３連単 ◎→★→全", "馬連 ◎-★", "単勝◎＋馬連 ◎-★", "単勝◎＋馬連 ◎-○"]:
             u = x[x[b + "|点数"] > 0]
             pay = u[b + "|払戻"]
             cost = u[b + "|点数"].sum() * 100
