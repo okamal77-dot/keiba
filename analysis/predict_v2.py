@@ -54,6 +54,14 @@ def class_features(h):
         tiers.append(val)
     h["4走前からの段の変化"] = tiers
     h["近4走平均着順"] = h[[f"{i}走前着順" for i in range(1, 5)]].mean(axis=1)
+    # 中央からの転入: 地方 (データ内) の出走が0〜2走なのに, 通算出走 (全成績) がそれより3走以上多い馬.
+    # 直近3か月でモデルの勝率より実際は約1.3倍勝っていた (front_transfer.py)
+    n, _ = T.rec_n(h["全成績"])
+    h["地方出走数"] = g.cumcount().values
+    h["中央からの転入"] = ((h["地方出走数"] <= 2) & (n.values >= h["地方出走数"] + 3)).astype(float)
+    # 直近2走のどちらかで4角3番手以内 (7番人気以下では人気より走る: 勝ちA/E 1.10)
+    p1, p2 = g["4角位置"].shift(1), g["4角位置"].shift(2)
+    h["直近2走で前"] = ((p1 <= 3) | (p2 <= 3)).astype(float)
     return h
 
 
@@ -79,6 +87,7 @@ def build(d, jr_course, jr_all):
     f["4走前から上がった"] = (t > 0).astype(float).values
     f["4走前から下がった"] = (t < 0).astype(float).values
     f["好成績で組・段が下がった"] = ((t < 0) & (d["近4走平均着順"] <= 2.5)).astype(float).values
+    f["中央からの転入"] = d["中央からの転入"].values
     return f
 
 
@@ -196,6 +205,10 @@ def main():
                 flags.append("前走1着で昇級(加点)")
             if ff.iloc[j]["好成績で組・段が下がった"]:
                 flags.append("好成績で降級(加点)")
+            if row["中央からの転入"]:
+                flags.append("中央からの転入(人気を重視)")
+            if row["直近2走で前"] and rt.loc[ix[j], "想定人気"] >= 7:
+                flags.append("人気薄の先行馬(3着候補)")
             if row["指数順"] >= 6 and row["前走脚質"] == "追込":
                 flags.append("消し条件")
             out.append({
