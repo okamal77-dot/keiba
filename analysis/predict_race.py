@@ -164,7 +164,7 @@ def pl_probs(w, pows=STAGE_POW):
     return top3, tri
 
 
-def suggest(w, tri, nos):
+def suggest(w, tri, nos, order=None):
     """勝率の形から買い目を作り, モデル上の的中確率を返す.
     本命の勝率 40%以上 (本命が堅い): 単勝◎ (1点). 参考として ３連単 ◎ → 2・3位 → 2・3位 (2点) を併記
         (３連単フォーメーションは当たっても配当が安く損が大きいため, バックテストで最も安定した単勝◎にする)
@@ -172,7 +172,7 @@ def suggest(w, tri, nos):
         (直近3か月の検証で, この形の◎の勝率は14%・単勝回収率45%, 馬連 ◎-○ は80%. star_exacta.py)
     25〜40%: ３連単 1・2位 → 1〜4位 → 1〜5位
     25%未満 (混戦): ３連複 1〜5位 BOX (10点)"""
-    o = list((-w).argsort())
+    o = list((-w).argsort()) if order is None else list(order)  # order: 印の順 (◎○ のあとを 2〜3着補正で並べ替えた順など)
     n = nos
     if w[o[0]] >= 0.40:
         ref = [(o[0], o[1], o[2]), (o[0], o[2], o[1])]

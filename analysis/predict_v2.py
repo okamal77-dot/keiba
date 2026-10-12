@@ -20,6 +20,7 @@ import ability_index as A
 import class_change as C
 import favorite_drivers as F
 import favorite_extra as X
+import place_backtest as PB
 import predict_race as P
 import trifecta_factors as T
 
@@ -109,6 +110,7 @@ def main():
     h = class_features(h)
     jr_c = P.jockey_rate(h, course)
     jr_a = A.jockey_rates(h)
+    q_idx = h.loc[h["年"] >= 2024, "指数"].quantile([1 / 3, 2 / 3]).values
     d = h[(h["競馬場"] == course) & (h["年"] >= 2024)].copy()
     d.index = range(len(d))
     f_old = P.build_features(d, jr_c)
@@ -193,8 +195,13 @@ def main():
         w = Pw[i, :len(ix)]
         top3, tri = P.pl_probs(w)
         nos = x["馬番"].astype(int).values
-        kind, buy, npts, hit = P.suggest(w, tri, nos)
-        rank = (-w).argsort().argsort()
+        # ◎○ は勝率順, ▲△△ 以降は 2〜3着補正 (第20節) を掛けた順 (place_backtest.py で ３連単・３連複の回収率が改善)
+        o = list((-w).argsort())
+        adj = w * PB.mult(x.reset_index(drop=True), q_idx).values
+        order = o[:2] + sorted(o[2:], key=lambda i: -adj[i])
+        kind, buy, npts, hit = P.suggest(w, tri, nos, order)
+        rank = np.empty(len(w), dtype=int)
+        rank[order] = np.arange(len(w))
         marks = np.array(["◎", "○", "▲", "△", "△"] + [""] * 30)[rank]
         ff = f_new.loc[ix]
         for j, (_, row) in enumerate(x.iterrows()):
