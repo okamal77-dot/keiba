@@ -45,6 +45,47 @@ def main():
     print()
     print(md(m))
 
+    # 回収率: 移籍後(1-3戦) と 移籍前(元地区の最後3戦)からの変化
+    roi = pd.read_csv(OUT / "transfer_flow_roi.csv", encoding="utf-8-sig").set_index(["元", "先"])
+    for kind in ("単勝", "複勝"):
+        rows = []
+        for r in REG:
+            row = {"移籍元＼移籍先": r}
+            for d in REG:
+                if d == r or (r, d) not in roi.index:
+                    row[d] = ""
+                else:
+                    x = roi.loc[(r, d)]
+                    row[d] = f"{x[f'移籍後_{kind}回収率']:.0f}({x[f'{kind}回収率_変化']:+.0f})"
+            rows.append(row)
+        mm = pd.DataFrame(rows)
+        mm.to_csv(OUT / f"tier_matrix_{kind}roi.csv", index=False, encoding="utf-8-sig")
+        print(f"\n#{kind}")
+        print(md(mm))
+
+    # 格の差(段数)ごとの集計
+    rr = roi.reset_index()
+    rr = rr[rr["元"].isin(TIER) & rr["先"].isin(TIER)]
+    rr["差"] = rr["元"].map(TIER) - rr["先"].map(TIER)
+    lab = {2: "2段以上格上へ", 1: "1段格上へ", 0: "同格", -1: "1段格下へ", -2: "2段以上格下へ"}
+    rr["方向"] = rr["差"].clip(-2, 2).map(lab)
+    out = []
+    for k in [2, 1, 0, -1, -2]:
+        x = rr[rr["方向"] == lab[k]]
+        w0, w1 = x["移籍前_出走数"], x["移籍後_出走数"]
+        def wm(c, w):
+            return (x[c] * w).sum() / w.sum()
+        out.append({"方向": lab[k], "組数": len(x), "移籍後出走数": int(w1.sum()),
+                    "移籍前_単勝": round(wm("移籍前_単勝回収率", w0)), "移籍後_単勝": round(wm("移籍後_単勝回収率", w1)),
+                    "単勝変化": f"{wm('移籍後_単勝回収率', w1) - wm('移籍前_単勝回収率', w0):+.0f}",
+                    "移籍前_複勝": round(wm("移籍前_複勝回収率", w0)), "移籍後_複勝": round(wm("移籍後_複勝回収率", w1)),
+                    "複勝変化": f"{wm('移籍後_複勝回収率', w1) - wm('移籍前_複勝回収率', w0):+.0f}",
+                    "移籍後_人気比": round(wm("移籍後_人気比_複勝率", w1), 2)})
+    o = pd.DataFrame(out)
+    o.to_csv(OUT / "tier_direction_roi.csv", index=False, encoding="utf-8-sig")
+    print("\n#方向")
+    print(md(o))
+
 
 if __name__ == "__main__":
     main()

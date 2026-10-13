@@ -156,6 +156,32 @@ def transfer_table(h):
     print("\n== 地方間移籍 1-3戦目: 移籍元→移籍先 (80走以上)\n", flow.round(2).to_string())
     flow.round(3).to_csv(OUT / "transfer_flow.csv", encoding="utf-8-sig")
 
+    # 移籍前(元の地区での最後3戦) と 移籍後(1-3戦目) の回収率・人気比の比較
+    ev = h[h["区分"] == "地方間移籍_1戦目"][["馬名", "生年月日", "blk", "src", "調教師所属"]]
+    ev = ev.rename(columns={"src": "元", "調教師所属": "先"})
+    pre = h.copy()
+    pre["rev"] = pre.groupby(["馬名", "生年月日", "blk"]).cumcount(ascending=False)
+    pre = pre[pre["rev"] < 3].copy()
+    pre["blk"] = pre["blk"] + 1
+    pre = pre.merge(ev, on=["馬名", "生年月日", "blk"])
+    post = mv.drop(columns=["元"]).merge(ev, on=["馬名", "生年月日", "blk"])
+
+    def agg(df):
+        g = df.groupby(["元", "先"])
+        return pd.DataFrame({"出走数": g.size(), "単勝回収率": g["単勝払戻"].mean(),
+                             "複勝回収率": g["複勝払戻"].mean(),
+                             "人気比_複勝率": g["top3"].mean() / g["exp3"].mean()})
+    a, b = agg(pre), agg(post)
+    roi = a.add_prefix("移籍前_").join(b.add_prefix("移籍後_"), how="inner")
+    roi["単勝回収率_変化"] = roi["移籍後_単勝回収率"] - roi["移籍前_単勝回収率"]
+    roi["複勝回収率_変化"] = roi["移籍後_複勝回収率"] - roi["移籍前_複勝回収率"]
+    roi = roi[roi["移籍後_出走数"] >= 80]
+    roi.round(3).to_csv(OUT / "transfer_flow_roi.csv", encoding="utf-8-sig")
+    tot = pd.DataFrame({"移籍前": [pre["単勝払戻"].mean(), pre["複勝払戻"].mean(), len(pre)],
+                        "移籍後": [post["単勝払戻"].mean(), post["複勝払戻"].mean(), len(post)]},
+                       index=["単勝回収率", "複勝回収率", "出走数"])
+    print("\n== 地方間移籍 全体: 移籍前3戦 vs 移籍後3戦\n", tot.round(1))
+
     # 人気帯別 (転入初戦 vs 通常)
     h["人気帯"] = pd.cut(h["人気"], [0, 1, 3, 5, 99], labels=["1人気", "2-3人気", "4-5人気", "6人気~"])
     h["種別"] = h["区分"].str.replace(r"_\d戦目", "", regex=True)
