@@ -1,5 +1,5 @@
 """地区の格付け・移籍の格上/格下表・回収率変化を Excel にまとめる.
-前提: class_transfer.py, track_scale.py の出力 (analysis/out/*.csv) があること."""
+前提: class_transfer.py, track_scale.py, grade_compare.py の出力 (analysis/out/*.csv) があること."""
 from pathlib import Path
 
 import pandas as pd
@@ -66,7 +66,7 @@ def main():
     # ---- 説明 ----
     ws = wb.active
     ws.title = "説明"
-    title(ws, "地方競馬 移籍の格付け表")
+    title(ws, "地方競馬 移籍の格付け表・級の比較")
     lines = [
         ("データ", "地方競馬 2023年1月〜2026年8月の出走馬・払戻データ、2024年1月〜2026年8月のレース一覧"),
         ("格付け", "1着賞金(C級・B級・A級・重賞)を総合して1部〜4部に分類。ばんえいは平地との移籍がないため除外"),
@@ -277,6 +277,70 @@ def main():
     ws.auto_filter.ref = f"A4:{get_column_letter(len(cols))}{i}"
     ws.freeze_panes = "C5"
     widths(ws, [10, 10, 12, 11, 13, 13, 11, 11, 13, 13, 11, 10, 10])
+
+    # ---- 級の比較 (grade_compare.py の出力があれば) ----
+    def simple_sheet(name, ttl, note, df, fmts=None, fill_col=None, widths_=None, index=False):
+        ws = wb.create_sheet(name)
+        title(ws, ttl, note)
+        df = df.reset_index() if index else df
+        for j, c in enumerate(df.columns, 1):
+            ws.cell(row=4, column=j, value=str(c))
+        style_header(ws, 4, len(df.columns))
+        for i, row in enumerate(df.itertuples(index=False), 5):
+            for j, v in enumerate(row, 1):
+                v = None if (isinstance(v, float) and pd.isna(v)) else v
+                if isinstance(v, float):
+                    v = round(v, 2)
+                ws.cell(row=i, column=j, value=v)
+            body(ws, i, i, 1, len(df.columns))
+            for j, f in (fmts or {}).items():
+                ws.cell(row=i, column=j).number_format = f
+        if widths_:
+            widths(ws, widths_)
+        ws.freeze_panes = "B5"
+        return ws
+
+    if (OUT / "grade_band_table.csv").exists():
+        band = pd.read_csv(OUT / "grade_band_table.csv", encoding="utf-8-sig").fillna("")
+        ws = simple_sheet("級の対応表", "各競馬場の級を1着賞金で横並びにした対応表",
+                          "同じ行の級はほぼ同じ賞金水準。重賞・2歳・3歳限定戦は除外。名古屋・笠松の B3〜B12 などは組番号の範囲",
+                          band, widths_=[12] + [14] * (len(band.columns) - 1))
+        bandfill = ["FCE4D6", "FCE4D6", "FFF2CC", "FFF2CC", "E2EFDA", "E2EFDA", "DDEBF7", "DDEBF7", "EDEDED"]
+        for i in range(len(band)):
+            ws.cell(row=5 + i, column=1).fill = PatternFill("solid", fgColor=bandfill[i % len(bandfill)])
+            for j in range(1, len(band.columns) + 1):
+                ws.cell(row=5 + i, column=j).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        lad = pd.read_csv(OUT / "grade_ladder.csv", encoding="utf-8-sig")
+        simple_sheet("級別の賞金一覧", "競馬場 × 級 の1着賞金(中央値、万円)", "2024年1月〜2026年8月。15レース以上ある級のみ",
+                     lad, fmts={3: "#,##0", 4: "#,##0"}, widths_=[10, 16, 18, 10])
+        mv = pd.read_csv(OUT / "grade_move_summary.csv", encoding="utf-8-sig")
+        ws = simple_sheet("級の移動と成績", "移籍初戦: 前走の級に対して、移籍先で入った級の賞金水準別の成績",
+                          "比 = 移籍先の級の1着賞金 ÷ 前走の級の1着賞金。回収率は%、人気比1.00=人気どおり",
+                          mv, fmts={2: "#,##0", 3: "0.0", 4: "0.0", 5: "0.0", 6: "0", 7: "0", 8: "0.00"},
+                          widths_=[22, 9, 9, 9, 9, 11, 11, 9])
+        pv = pd.read_csv(OUT / "grade_move_by_prev.csv", encoding="utf-8-sig")
+        r0 = 5 + len(mv) + 2
+        ws.cell(row=r0, column=1, value="複勝率(%): 級の移動 × 前走着順").font = Font(name=F, bold=True)
+        for j, c in enumerate(pv.columns, 1):
+            ws.cell(row=r0 + 1, column=j, value=str(c))
+        style_header(ws, r0 + 1, len(pv.columns))
+        for i, row in enumerate(pv.itertuples(index=False), r0 + 2):
+            for j, v in enumerate(row, 1):
+                ws.cell(row=i, column=j, value=round(v, 1) if isinstance(v, float) else v)
+            body(ws, i, i, 1, len(pv.columns))
+        ws.conditional_formatting.add(f"B{r0 + 2}:{get_column_letter(len(pv.columns))}{r0 + 1 + len(pv)}", ColorScaleRule(
+            start_type="min", start_color="F8696B", mid_type="percentile", mid_value=50, mid_color="FFFFFF",
+            end_type="max", end_color="63BE7B"))
+        nk = pd.read_csv(OUT / "grade_from_nankan_c.csv", encoding="utf-8-sig")
+        simple_sheet("南関東C級からの移籍", "南関東のC級から他地区へ移籍した馬の初戦成績",
+                     "主な級 = 移籍先で入った級(多い順)。回収率は%", nk,
+                     fmts={2: "#,##0", 4: "0", 5: "0.0", 6: "0.0", 7: "0.0", 8: "0", 9: "0"},
+                     widths_=[10, 9, 16, 14, 9, 9, 9, 11, 11])
+        pr = pd.read_csv(OUT / "grade_pairs.csv", encoding="utf-8-sig")
+        ws = simple_sheet("級の対応(実績)", "前走の競馬場・級 → 移籍先の競馬場・級(30件以上)",
+                          "実際の移籍で多い級の対応と、移籍初戦の成績", pr,
+                          fmts={3: "#,##0", 4: "0.0", 5: "0.00", 6: "0"}, widths_=[14, 14, 8, 9, 9, 11])
+        ws.auto_filter.ref = f"A4:F{4 + len(pr)}"
 
     from openpyxl.workbook.properties import CalcProperties
     wb.calculation = CalcProperties(fullCalcOnLoad=True)
