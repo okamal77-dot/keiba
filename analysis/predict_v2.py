@@ -157,7 +157,7 @@ def main():
         return out
 
     def underrated(sub, r, rank_max=UR_RANK, gap=UR_GAP):
-        kesi = (sub["指数順"] >= 6) & (sub["前走脚質"] == "追込")
+        kesi = T.kesi(sub)
         return (r["勝率順"] <= rank_max) & (r["想定人気"] >= r["勝率順"] + gap) & ~kesi
 
     Xt, Mt, Ot, _ = P.pad(tr, f_new.loc[tr.index])
@@ -166,7 +166,7 @@ def main():
     bp, mp, sp = P.fit(Xt, Mt, Ot)
     rv = ranks(va, f_new, bw, mw, sw, bp, mp, sp)
     vr = d.loc[va.index, ["競馬場", "競走年月日", "レース番号", "馬番", "人気", "着順", "top3", "期待", "期待勝"]].join(rv)
-    vr["消し"] = ((va["指数順"] >= 6) & (va["前走脚質"] == "追込")).values
+    vr["消し"] = T.kesi(va).values
     vr.to_csv(T.OUT / f"pred2_underrated_rows_{course}.csv", index=False, encoding="utf-8-sig")
     fl = underrated(va, rv)
     x = d.loc[va.index][fl]
@@ -216,7 +216,7 @@ def main():
                 flags.append("中央からの転入(人気を重視)")
             if row["直近2走で前"] and rt.loc[ix[j], "想定人気"] >= 7:
                 flags.append("人気薄の先行馬(3着候補)")
-            if row["指数順"] >= 6 and row["前走脚質"] == "追込":
+            if row["指数順"] >= 6 and row["前走脚質"] == "追込" and row["前々走脚質"] == "追込":
                 flags.append("消し条件")
             out.append({
                 "レース": int(row["レース番号"]), "レース名": row["レース名"], "距離": row["距離"], "印": marks[j],

@@ -239,7 +239,7 @@ def main():
         good = ((x["指数順"] <= 3).astype(int) + (x["前走上がり順"] <= 3).astype(int)
                 + x["前走脚質"].isin(["先行", "差し"]).astype(int)
                 + (~((x["コンビ数"] >= 3) & (x["コンビ3着内"] / x["コンビ数"] <= 0.2))).astype(int))
-        kesi = (x["指数順"] >= 6) & (x["前走脚質"] == "追込")
+        kesi = T.kesi(x)
         best = sorted(tri.items(), key=lambda kv: -kv[1])[:5]
         nos = x["馬番"].astype(int).values
         kind, buy, npts, hit = suggest(w, tri, nos)
