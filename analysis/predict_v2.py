@@ -20,6 +20,7 @@ import ability_index as A
 import class_change as C
 import favorite_drivers as F
 import favorite_extra as X
+import ev_select as EV
 import place_backtest as PB
 import predict_race as P
 import trifecta_factors as T
@@ -183,6 +184,10 @@ def main():
     b, mu, sd = P.fit(Xt, Mt, Ot)
     tg = d[d["予想対象"]].sort_values(KEY + ["馬番"])
     rt = ranks(tg, f_new, b, mu, sd, bp, mp, sp)
+    # 期待値 (想定): モデル勝率 × 想定人気から見込んだオッズ. 想定人気はモデルの値を使う (ev_select.py の検証で
+    # 実際の人気で計算するより成績が良かった: 期待値1.0以上の単勝回収率 85% 対 74%)
+    q_mk, rate_mk = EV.market_table(h)
+    rt["期待値"], rt["想定オッズ"] = EV.expected_value(tg, rt["勝率"], rt["想定人気"], q_mk, rate_mk)
     # 実際の人気が分かっていればそちらを使う
     has_pop = tg["人気"].notna() & (tg.groupby(KEY)["人気"].transform("nunique") > 1)
     rt.loc[has_pop, "想定人気"] = tg.loc[has_pop, "人気"]
@@ -229,10 +234,18 @@ def main():
                 "位置取り": None if pd.isna(row["位置取り"]) else round(row["位置取り"], 2),
                 "想定人気": int(rt.loc[ix[j], "想定人気"]),
                 "過小評価候補": "★" if rt.loc[ix[j], "過小評価候補"] else "",
+                "期待値(想定)": None if pd.isna(rt.loc[ix[j], "期待値"]) else round(float(rt.loc[ix[j], "期待値"]), 2),
+                "想定オッズ": None if pd.isna(rt.loc[ix[j], "想定オッズ"]) else round(float(rt.loc[ix[j], "想定オッズ"]), 1),
                 "注記": " / ".join(flags),
                 "買い目": f"[{kind}] {buy} ({npts}点, モデル上の的中確率 {hit*100:.0f}%)" if j == 0 else "",
             })
     o = pd.DataFrame(out)
+    # 各レースの期待値上位 (消しを除き, 期待値1.0以上を高い順に3頭まで)
+    o["期待値順"] = None
+    for k, g in o.groupby("レース"):
+        c = g[(g["期待値(想定)"].fillna(0) >= 1.0) & ~g["注記"].str.contains("消し条件")]
+        c = c.sort_values("期待値(想定)", ascending=False).head(3)
+        o.loc[c.index, "期待値順"] = range(1, len(c) + 1)
     date = int(tg["競走年月日"].iloc[0])
     o.to_csv(T.OUT / f"pred2_{date}_{course}.csv", index=False, encoding="utf-8-sig")
     vt.to_csv(T.OUT / f"pred2_{date}_{course}_valid.csv", encoding="utf-8-sig")
@@ -241,6 +254,9 @@ def main():
         print(f"\n## {k}R {g['レース名'].iloc[0]} {g['距離'].iloc[0]}m")
         print(g.sort_values("勝率%", ascending=False).drop(columns=["レース", "レース名", "距離", "買い目"]).to_string(index=False))
         print("買い目:", g["買い目"].iloc[0])
+        e = g[g["期待値順"].notna()].sort_values("期待値順")
+        if len(e):
+            print("期待値上位:", " / ".join(f"{r.馬番} {r.馬名} (期待値{r['期待値(想定)']}, 想定{r.想定オッズ}倍)" for _, r in e.iterrows()))
         u = g[g["過小評価候補"] == "★"]
         if len(u):
             print("過小評価候補:", " / ".join(f"{r.馬番} {r.馬名} (勝率{r['勝率%']}%, 想定{r.想定人気}番人気)" for _, r in u.iterrows()))
