@@ -20,6 +20,7 @@ import ability_index as A
 import class_change as C
 import favorite_drivers as F
 import favorite_extra as X
+import ev_calibrate as EC
 import ev_select as EV
 import place_backtest as PB
 import predict_race as P
@@ -188,6 +189,9 @@ def main():
     # 実際の人気で計算するより成績が良かった: 期待値1.0以上の単勝回収率 85% 対 74%)
     q_mk, rate_mk = EV.market_table(h)
     rt["期待値"], rt["想定オッズ"] = EV.expected_value(tg, rt["勝率"], rt["想定人気"], q_mk, rate_mk)
+    # 実績とのずれを補正 (ev_calibrate.py): 人気薄ほど モデル勝率も想定オッズも高く出すぎる
+    pc, oc = EC.load_fit()
+    rt["補正勝率"], rt["補正オッズ"], rt["補正期待値"] = EC.calibrated(rt["勝率"], rt["想定人気"], rt["想定オッズ"], pc, oc)
     # 実際の人気が分かっていればそちらを使う
     has_pop = tg["人気"].notna() & (tg.groupby(KEY)["人気"].transform("nunique") > 1)
     rt.loc[has_pop, "想定人気"] = tg.loc[has_pop, "人気"]
@@ -234,17 +238,19 @@ def main():
                 "位置取り": None if pd.isna(row["位置取り"]) else round(row["位置取り"], 2),
                 "想定人気": int(rt.loc[ix[j], "想定人気"]),
                 "過小評価候補": "★" if rt.loc[ix[j], "過小評価候補"] else "",
-                "期待値(想定)": None if pd.isna(rt.loc[ix[j], "期待値"]) else round(float(rt.loc[ix[j], "期待値"]), 2),
-                "想定オッズ": None if pd.isna(rt.loc[ix[j], "想定オッズ"]) else round(float(rt.loc[ix[j], "想定オッズ"]), 1),
+                "期待値(補正)": None if pd.isna(rt.loc[ix[j], "補正期待値"]) else round(float(rt.loc[ix[j], "補正期待値"]), 2),
+                "補正オッズ": None if pd.isna(rt.loc[ix[j], "補正オッズ"]) else round(float(rt.loc[ix[j], "補正オッズ"]), 1),
+                "補正勝率%": None if pd.isna(rt.loc[ix[j], "補正勝率"]) else round(float(rt.loc[ix[j], "補正勝率"]) * 100, 1),
                 "注記": " / ".join(flags),
                 "買い目": f"[{kind}] {buy} ({npts}点, モデル上の的中確率 {hit*100:.0f}%)" if j == 0 else "",
             })
     o = pd.DataFrame(out)
-    # 各レースの期待値上位 (消しを除き, 期待値1.0以上を高い順に3頭まで)
+    # 各レースの期待値上位 (消しを除き, 補正後の期待値1.0以上を高い順に3頭まで).
+    # 交差検証では 1.2〜2.0 の帯が最も良く (回収率 92〜104%), 2.0超は補正後も出すぎ (71%)
     o["期待値順"] = None
     for k, g in o.groupby("レース"):
-        c = g[(g["期待値(想定)"].fillna(0) >= 1.0) & ~g["注記"].str.contains("消し条件")]
-        c = c.sort_values("期待値(想定)", ascending=False).head(3)
+        c = g[(g["期待値(補正)"].fillna(0) >= 1.0) & ~g["注記"].str.contains("消し条件")]
+        c = c.sort_values("期待値(補正)", ascending=False).head(3)
         o.loc[c.index, "期待値順"] = range(1, len(c) + 1)
     date = int(tg["競走年月日"].iloc[0])
     o.to_csv(T.OUT / f"pred2_{date}_{course}.csv", index=False, encoding="utf-8-sig")
@@ -256,7 +262,7 @@ def main():
         print("買い目:", g["買い目"].iloc[0])
         e = g[g["期待値順"].notna()].sort_values("期待値順")
         if len(e):
-            print("期待値上位:", " / ".join(f"{r.馬番} {r.馬名} (期待値{r['期待値(想定)']}, 想定{r.想定オッズ}倍)" for _, r in e.iterrows()))
+            print("期待値上位:", " / ".join(f"{r.馬番} {r.馬名} (期待値{r['期待値(補正)']}, 補正オッズ{r.補正オッズ}倍)" for _, r in e.iterrows()))
         u = g[g["過小評価候補"] == "★"]
         if len(u):
             print("過小評価候補:", " / ".join(f"{r.馬番} {r.馬名} (勝率{r['勝率%']}%, 想定{r.想定人気}番人気)" for _, r in u.iterrows()))
