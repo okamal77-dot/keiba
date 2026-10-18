@@ -4,7 +4,7 @@
         python3 analysis/koryu_backtest.py <data> --summary  (全場をまとめて集計)
 2025年1月〜2026年10月を半年ごとに区切り, その期間より前のデータだけで学習した改良版モデル (predict_v2.build) で
 各レースの勝率と印 (◎○ は勝率順, ▲△ は 2〜3着補正の順) を出す. 交流戦と通常戦の成績を同じモデル・同じ期間で比べる.
-交流戦の判定: 調教師所属が開催地の地区 (南関東4場は1地区) と違う馬が2頭以上.
+区分: 中央所属の馬が2頭以上 = 中央交流, それ以外で 開催地と違う地区 (南関東4場・東海2場はそれぞれ1地区) の馬が2頭以上 = 地方間交流.
 出力: analysis/out/koryu_rows_<競馬場>.csv, koryu_summary.csv
 """
 import sys
@@ -76,6 +76,15 @@ def run(course):
 def summary():
     import glob
     rows = pd.concat([pd.read_csv(f) for f in glob.glob(str(T.OUT / "koryu_rows_*.csv"))])
+    # 区分: 中央所属の馬が2頭以上 = 中央交流 / それ以外で他地区の馬が2頭以上 = 地方間交流 (東海の名古屋・笠松は1地区とみなす)
+    tokai = {"愛知": "東海", "笠松": "東海"}
+    host = rows["競馬場"].map(HOST).map(lambda a: tokai.get(a, a))
+    own = area(rows["調教師所属"]).map(lambda a: tokai.get(a, a))
+    rows["他地区"] = (own != host) & (rows["調教師所属"] != "JRA")
+    rows["中央"] = rows["調教師所属"] == "JRA"
+    nj = rows.groupby(KEY)["中央"].transform("sum")
+    no = rows.groupby(KEY)["他地区"].transform("sum")
+    rows["区分"] = np.where(nj >= 2, "中央交流", np.where(no >= 2, "地方間交流", "通常戦"))
     pay = pd.concat([T.read(f) for y in T.YEARS for f in T.FILES[y][2]], ignore_index=True).drop_duplicates(KEY)
     pay = pay.set_index(KEY)
     res = []
@@ -101,8 +110,8 @@ def summary():
         else:
             rc, rr = 1000, fp * f3.issubset(nos[:5])
         fav = g[g["人気"] == 1]
-        res.append({"競馬場": k[0], "競走年月日": k[1], "レース番号": k[2], "交流": bool(g["交流"].iloc[0]),
-                    "◎他地区": bool(g["他地区"].iloc[0]), "◎勝": fin[nos[0]] == 1, "◎3着内": fin[nos[0]] <= 3,
+        res.append({"競馬場": k[0], "競走年月日": k[1], "レース番号": k[2], "区分": g["区分"].iloc[0],
+                    "◎他地区": bool(g["他地区"].iloc[0]), "◎中央": bool(g["中央"].iloc[0]), "◎勝": fin[nos[0]] == 1, "◎3着内": fin[nos[0]] <= 3,
                     "◎人気": g["人気"].iloc[0], "1人気勝": bool((fav["着順"] == 1).any()),
                     "1人気3着内": bool((fav["着順"] <= 3).any()), "単勝◎": win,
                     "印5頭の3着内数": sum(fin[n] <= 3 for n in nos[:5]),
@@ -121,13 +130,15 @@ def summary():
                           "3連複5頭BOX回収率%": y["3連複5頭BOX"].sum() / (10 * n),
                           "ルール買い目回収率%": y["ルール_r"].sum() / y["ルール_c"].sum() * 100,
                           "消しの3着内/頭数": f"{y['消しの3着内'].sum()}/{y['消し頭数'].sum()}"})
-    s = x.groupby("交流").apply(agg).rename(index={True: "交流戦", False: "通常戦"})
-    k = x[x["交流"]]
-    s2 = k.groupby("◎他地区").apply(agg).rename(index={True: "交流戦: ◎が他地区の馬", False: "交流戦: ◎が地元の馬"})
-    out = pd.concat([s, s2])
+    s = x.groupby("区分").apply(agg)
+    k = x[x["区分"] == "地方間交流"]
+    s2 = k.groupby("◎他地区").apply(agg).rename(index={True: "地方間交流: ◎が他地区の馬", False: "地方間交流: ◎が地元の馬"})
+    j = x[x["区分"] == "中央交流"]
+    s3 = j.groupby("◎中央").apply(agg).rename(index={True: "中央交流: ◎が中央の馬", False: "中央交流: ◎が地方の馬"})
+    out = pd.concat([s, s2, s3])
     out.to_csv(T.OUT / "koryu_summary.csv", encoding="utf-8-sig")
     print(out.round(1).T.to_string())
-    print("\n交流戦の競馬場別\n", k.groupby("競馬場").apply(agg)[["レース数", "◎勝率%", "1番人気勝率%", "単勝◎回収率%", "3連複◎○▲回収率%", "ルール買い目回収率%"]].round(0).to_string())
+    print("\n地方間交流の競馬場別\n", k.groupby("競馬場").apply(agg)[["レース数", "◎勝率%", "1番人気勝率%", "単勝◎回収率%", "3連複◎○▲回収率%", "ルール買い目回収率%"]].round(0).to_string())
 
 
 if __name__ == "__main__":
