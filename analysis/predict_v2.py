@@ -28,6 +28,23 @@ import trifecta_factors as T
 
 KEY = T.KEY
 UR_RANK, UR_GAP = 5, 2  # 過小評価候補: 勝率順位 UR_RANK 位以内, 想定人気が勝率順位より UR_GAP 以上低い
+# 交流戦の区分 (第24節 koryu_backtest.py): 開催地の地区. 南関東4場・東海2場はそれぞれ1地区とみなす
+HOST = {"佐賀": "佐賀", "名古屋": "東海", "園田": "兵庫", "姫路": "兵庫", "大井": "南関", "川崎": "南関", "船橋": "南関",
+        "浦和": "南関", "水沢": "岩手", "盛岡": "岩手", "笠松": "東海", "金沢": "金沢", "門別": "北海道", "高知": "高知"}
+AREA = {"大井": "南関", "川崎": "南関", "船橋": "南関", "浦和": "南関", "愛知": "東海", "笠松": "東海"}
+
+
+def other_area(x, course):
+    """調教師所属が開催地と別の地区の地方馬か (中央所属は含まない)"""
+    a = x["調教師所属"].map(lambda s: AREA.get(s, s))
+    return (a != HOST.get(course)) & (x["調教師所属"] != "JRA")
+
+
+def race_kind(x, course):
+    """中央所属が2頭以上 = 中央交流, それ以外で他地区の馬が2頭以上 = 地方間交流, ほかは通常戦"""
+    if (x["調教師所属"] == "JRA").sum() >= 2:
+        return "中央交流"
+    return "地方間交流" if other_area(x, course).sum() >= 2 else "通常戦"
 
 
 def class_features(h):
@@ -207,7 +224,11 @@ def main():
         # ◎○ は勝率順, ▲△△ 以降は 2〜3着補正 (第20節) を掛けた順 (place_backtest.py で ３連単・３連複の回収率が改善)
         o = list((-w).argsort())
         adj = w * PB.mult(x.reset_index(drop=True), q_idx).values
-        order = o[:2] + sorted(o[2:], key=lambda i: -adj[i])
+        # 消しの馬は ▲△ に入れない. 地方間交流では消しを使わない (第24節: 3着内率14%で通常戦の倍)
+        rk = race_kind(x, course)
+        oth = other_area(x, course).values
+        kesi = (T.kesi(x) & (rk != "地方間交流")).values
+        order = o[:2] + sorted(o[2:], key=lambda i: (kesi[i], -adj[i]))
         kind, buy, npts, hit = P.suggest(w, tri, nos, order)
         rank = np.empty(len(w), dtype=int)
         rank[order] = np.arange(len(w))
@@ -225,8 +246,14 @@ def main():
                 flags.append("中央からの転入(人気を重視)")
             if row["直近2走で前"] and rt.loc[ix[j], "想定人気"] >= 7:
                 flags.append("人気薄の先行馬(3着候補)")
-            if row["指数順"] >= 6 and row["前走脚質"] == "追込" and row["前々走脚質"] == "追込":
+            if kesi[j]:
                 flags.append("消し条件")
+            if rank[j] == 0 and rk == "中央交流":
+                # 第24節: 中央交流では ◎の勝率24% (1番人気38%). ◎が地方の馬なら 19%, ルールの買い目の回収率26%
+                flags.append("中央交流(印は参考程度・人気を重視)" + ("/◎が地方の馬(割引)" if row["調教師所属"] != "JRA" else ""))
+            if rank[j] == 0 and rk == "地方間交流":
+                # 第24節: ◎が他地区の馬なら ◎の勝率30%・単勝回収率63% (1番人気は43%)
+                flags.append("地方間交流" + ("/◎が他地区の馬(1番人気を重視)" if oth[j] else "/◎が地元の馬"))
             out.append({
                 "レース": int(row["レース番号"]), "レース名": row["レース名"], "距離": row["距離"], "印": marks[j],
                 "馬番": int(row["馬番"]), "馬名": row["馬名"], "騎手": row["騎手名"],
