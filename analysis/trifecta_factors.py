@@ -34,7 +34,12 @@ FILES = {  # 年: (出走馬, レース一覧, 払戻) のファイル名リス�
            ["race2026.csv", "202609_racelist.csv", "202610_racelist.csv"],
            ["pay2026.csv", "202609_payback.csv", "202610_payback.csv"]),
 }
-YEARS = list(FILES)
+# 手元に無いファイル (2024年のレース一覧, 10月分など) は飛ばす. レース一覧が無い年は距離・馬場・脚質が欠ける
+_missing = [f for y in FILES for lst in FILES[y] for f in lst if not (DATA / f).exists()]
+if _missing:
+    print("※ data/ に無いため飛ばすファイル:", ", ".join(_missing), file=sys.stderr)
+FILES = {y: tuple([f for f in lst if (DATA / f).exists()] for lst in v) for y, v in FILES.items()}
+YEARS = [y for y in FILES if FILES[y][0]]
 ODDS_MONTH = 202609  # 確定オッズがある月 (オッズで補正した検証に使う)
 
 

@@ -1,6 +1,7 @@
 """荒れ判定 (race_profile.py) の検証.
 
 使い方: python3 analysis/race_profile_backtest.py <data>
+  (0) 2021年・2022年 (集計表より前の年なので, 学習に使っていない期間): 判定と実際の比較, 判定別の回収率.
   (1) 2026年1〜8月: 推定万馬券率・上位4人気決着率と実際の比較, 判定別の買い方の回収率.
       集計表 (analysis/out/*.csv) はこの期間を含む 2023年〜2026年8月で作っているので, 学習期間内の確認になる.
   (2) 2026年9月 (学習に使っていない期間): 確定単勝オッズを入れて判定し, 買い目の回収率を
@@ -22,7 +23,9 @@ import race_profile as RP  # noqa: E402
 DATA = Path(sys.argv[1] if len(sys.argv) > 1 else "data")
 OUT = Path(__file__).parent / "out"
 KEY = ["競馬場", "競走年月日", "レース番号"]
-PERIODS = {"1-8月": ("2026_horselist_1-8月まとめ.csv", "race2026.csv", "pay2026.csv"),
+PERIODS = {"2021年": ("2021_horselist_全月まとめ.csv", "race2021.csv", "pay2021.csv"),
+           "2022年": ("2022_horselist_全月まとめ.csv", "race2022.csv", "pay2022.csv"),
+           "1-8月": ("2026_horselist_1-8月まとめ.csv", "race2026.csv", "pay2026.csv"),
            "9月": ("202609_horselist.csv", "202609_racelist.csv", "202609_payback.csv")}
 
 
@@ -33,6 +36,9 @@ def read(name, **kw):
 def load():
     hs, rs, ps = [], [], []
     for per, (hf, rf, pf) in PERIODS.items():
+        if not all((DATA / f).exists() for f in (hf, rf, pf)):
+            print(f"※ {per} のデータが無いので飛ばす", file=sys.stderr)
+            continue
         h, r, p = read(hf), read(rf).drop_duplicates(KEY), read(pf).drop_duplicates(KEY)
         for x in (h, r, p):
             x["期間"] = per
@@ -80,16 +86,16 @@ def main():
     t = RP.load()
     rows = []
     rinfo = r.set_index(KEY)
+    pinfo = p.set_index(KEY)
     for k, x in h.groupby(KEY, sort=False):
         if k not in rinfo.index or len(x) < 5 or x["着順"].notna().sum() < 3:
             continue
         course, _, rno = k
         if course not in t["summary"].index:
             continue
-        pr = p[(p["競馬場"] == k[0]) & (p["競走年月日"] == k[1]) & (p["レース番号"] == k[2])]
-        if pr.empty or pd.isna(pr["３連単払戻金（円）"].iloc[0]):
+        if k not in pinfo.index or pd.isna(pinfo.loc[k, "３連単払戻金（円）"]):
             continue
-        pr = pr.iloc[0]
+        pr = pinfo.loc[k]
         res = (int(pr["３連単組番馬番1"]), int(pr["３連単組番馬番2"]), int(pr["３連単組番馬番3"]))
         payout = float(pr["３連単払戻金（円）"])
         ri = rinfo.loc[k]
