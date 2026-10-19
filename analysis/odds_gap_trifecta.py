@@ -1,4 +1,4 @@
-"""1〜4番人気の単勝オッズの差 (オッズの崖の位置) ごとに, 上位人気の３連単の組み合わせの回収率を比べる.
+"""1〜4番人気の単勝オッズの差 (オッズの崖の位置) ごとに, 上位人気の３連単・馬単の組み合わせの回収率を比べる.
 
 使い方: python3 analysis/odds_gap_trifecta.py <data>
   確定オッズ (data/odds/2026MM_*_odds.csv) がある 2026年9月〜10月のレースが対象. 人気は確定単勝オッズの順.
@@ -43,6 +43,27 @@ BETS = {
 }
 
 
+def perm2(A, B):
+    return [(a, b) for a in A for b in B if a != b]
+
+
+# 馬単 (人気番号)
+EX_BETS = {
+    "1→2 (1点)": [(1, 2)],
+    "1→2,3 (2点)": perm2([1], [2, 3]),
+    "1→2,3,4 (3点)": perm2([1], [2, 3, 4]),
+    "1→2〜5 (4点)": perm2([1], [2, 3, 4, 5]),
+    "1⇄2 (2点)": perm2([1, 2], [1, 2]),
+    "1⇄2,3 (4点)": perm2([1], [2, 3]) + perm2([2, 3], [1]),
+    "1⇄2,3,4 (6点)": perm2([1], [2, 3, 4]) + perm2([2, 3, 4], [1]),
+    "2,3→1 (2点)": perm2([2, 3], [1]),
+    "2,3,4→1 (3点)": perm2([2, 3, 4], [1]),
+    "上位3頭BOX (6点)": perm2([1, 2, 3], [1, 2, 3]),
+    "上位4頭BOX (12点)": perm2([1, 2, 3, 4], [1, 2, 3, 4]),
+    "2,3,4BOX 1番人気消し (6点)": perm2([2, 3, 4], [2, 3, 4]),
+}
+
+
 def load():
     rows = []
     for mname, ym in MONTHS.items():
@@ -56,7 +77,8 @@ def load():
         w = w[w["オッズ"] > 0]
         pay = pd.read_csv(DATA / f"{ym}_payback.csv", encoding="utf-8-sig", low_memory=False).drop_duplicates(KEY)
         cols = ["３連単組番馬番1", "３連単組番馬番2", "３連単組番馬番3", "３連単払戻金（円）"]
-        pay = pay.dropna(subset=cols).set_index(KEY)[cols]
+        ex = ["馬単組番1", "馬単組番2", "馬単払戻金（円）"]
+        pay = pay.dropna(subset=cols).set_index(KEY)[cols + ex]
         for k, g in w.groupby(KEY):
             if k not in pay.index or len(g) < 5:
                 continue
@@ -68,27 +90,29 @@ def load():
             pop = {n: i + 1 for i, n in enumerate(nos)}           # 馬番 → 人気 (オッズ順)
             rp = tuple(pop.get(n, 99) for n in res)               # 結果を人気で表す
             ratios = [od[i + 1] / od[i] for i in range(4)]
+            exr = (pop.get(int(pr[ex[0]]), 99), pop.get(int(pr[ex[1]]), 99)) if pr[ex].notna().all() else None
             rows.append({"月": mname, "競馬場": k[0], "競走年月日": k[1], "レース番号": k[2], "頭数": len(g),
                          "o1": od[0], "o2": od[1], "o3": od[2], "o4": od[3], "o5": od[4],
                          "r12": ratios[0], "r23": ratios[1], "r34": ratios[2], "r45": ratios[3],
-                         "形": SHAPES[int(np.argmax(ratios))], "結果人気": rp, "配当": float(pr[cols[3]])})
+                         "形": SHAPES[int(np.argmax(ratios))], "結果人気": rp, "配当": float(pr[cols[3]]),
+                         "馬単結果人気": exr, "馬単配当": float(pr[ex[2]]) if exr else np.nan})
     return pd.DataFrame(rows)
 
 
-def evaluate(g):
+def evaluate(g, bets=BETS, res="結果人気", pay="配当"):
     """買い方ごとの 的中率・回収率"""
     out = {"レース数": len(g)}
-    for name, combos in BETS.items():
+    for name, combos in bets.items():
         s = set(combos)
-        hit = g["結果人気"].map(lambda r: r in s)
+        hit = g[res].map(lambda r: r in s)
         out[name + " 的中%"] = hit.mean() * 100
-        out[name + " 回収率%"] = g.loc[hit, "配当"].sum() / (len(g) * len(combos) * 100) * 100
+        out[name + " 回収率%"] = g.loc[hit, pay].sum() / (len(g) * len(combos) * 100) * 100
     return pd.Series(out)
 
 
-def boot(g, name, n=2000):
-    s = set(BETS[name])
-    ret = np.where(g["結果人気"].map(lambda r: r in s), g["配当"], 0.0) / (len(BETS[name]) * 100)
+def boot(g, name, n=2000, bets=BETS, res="結果人気", pay="配当"):
+    s = set(bets[name])
+    ret = np.where(g[res].map(lambda r: r in s), g[pay], 0.0) / (len(bets[name]) * 100)
     idx = np.random.default_rng(0).integers(0, len(ret), (n, len(ret)))
     return np.percentile(ret[idx].mean(1) * 100, [5, 95])
 
@@ -96,8 +120,9 @@ def boot(g, name, n=2000):
 def main():
     d = load()
     d["1人気オッズ帯"] = pd.cut(d["o1"], [0, 1.5, 2.0, 3.0, 99], labels=["~1.4倍", "1.5~1.9倍", "2.0~2.9倍", "3.0倍~"], right=False)
-    d.drop(columns=["結果人気"]).assign(結果人気=d["結果人気"].map(lambda r: "-".join(map(str, r)))) \
-        .to_csv(OUT / "ogt_races.csv", index=False, encoding="utf-8-sig")
+    d.drop(columns=["結果人気", "馬単結果人気"]).assign(
+        結果人気=d["結果人気"].map(lambda r: "-".join(map(str, r))),
+        馬単結果人気=d["馬単結果人気"].map(lambda r: "-".join(map(str, r)) if r else "")).to_csv(OUT / "ogt_races.csv", index=False, encoding="utf-8-sig")
     pd.set_option("display.width", 250, "display.max_columns", 60, "display.max_rows", 200)
     print(f"対象: {len(d)}レース (9月 {(d['月'] == '9月').sum()}, 10月 {(d['月'] == '10月').sum()})")
     print("\n== オッズの崖の位置ごとの件数と, 各人気のオッズの中央値")
@@ -160,6 +185,43 @@ def main():
     both = t3[t3["両月とも100%超"]]
     print(f"\n== 上位4人気の並び (4形×24通り=96) のうち, 9月・10月とも回収率100%超: {len(both)}通り")
     print(both.round(1).to_string(index=False))
+
+    exacta(d)
+
+
+def exacta(d):
+    """馬単: 形ごと, 1番人気のオッズ帯ごと, 2〜4番人気の接近度ごと"""
+    d = d[d["馬単結果人気"].notna()]
+    kw = dict(bets=EX_BETS, res="馬単結果人気", pay="馬単配当")
+    res = []
+    for shape in SHAPES + ["全体"]:
+        g0 = d if shape == "全体" else d[d["形"] == shape]
+        for m in ["9月", "10月", "計"]:
+            g = g0 if m == "計" else g0[g0["月"] == m]
+            if len(g):
+                res.append(evaluate(g, **kw).rename((shape, m)))
+    t = pd.DataFrame(res)
+    t.index = pd.MultiIndex.from_tuples(t.index, names=["形", "月"])
+    t.round(1).to_csv(OUT / "ogt_shape_exacta.csv", encoding="utf-8-sig")
+    for shape in SHAPES + ["全体"]:
+        x = t.loc[shape]
+        tab = pd.DataFrame([{"買い方": name,
+                             **{f"{m} 的中%": x.loc[m, name + " 的中%"] for m in x.index},
+                             **{f"{m} 回収率%": x.loc[m, name + " 回収率%"] for m in x.index}} for name in EX_BETS]
+                           ).set_index("買い方")
+        g = d if shape == "全体" else d[d["形"] == shape]
+        tab["計 90%区間"] = [f"{lo:.0f}〜{hi:.0f}" for lo, hi in (boot(g, n, **kw) for n in EX_BETS)]
+        print(f"\n== 馬単 {shape} (9月 {int(x.loc['9月', 'レース数'])}・10月 {int(x.loc['10月', 'レース数'])} レース)")
+        print(tab.round(1).to_string())
+    rows = []
+    for (band, shape), g in d.groupby(["1人気オッズ帯", "形"], observed=True):
+        if len(g) >= 40:
+            e = evaluate(g, **kw)
+            rows.append({"1人気オッズ帯": band, "形": shape, "レース数": len(g),
+                         **{b: e[b + " 回収率%"] for b in EX_BETS}})
+    t2 = pd.DataFrame(rows)
+    print("\n== 馬単 1番人気のオッズ帯 × 形 の回収率% (40レース以上)\n", t2.round(1).to_string(index=False))
+    t2.round(2).to_csv(OUT / "ogt_band_shape_exacta.csv", index=False, encoding="utf-8-sig")
 
 
 if __name__ == "__main__":
