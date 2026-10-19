@@ -93,9 +93,12 @@ def main():
         course, _, rno = k
         if course not in t["summary"].index:
             continue
-        if k not in pinfo.index or pd.isna(pinfo.loc[k, "３連単払戻金（円）"]):
+        if k not in pinfo.index:
             continue
         pr = pinfo.loc[k]
+        tri_cols = ["３連単払戻金（円）", "３連単組番馬番1", "３連単組番馬番2", "３連単組番馬番3"]
+        if pr[tri_cols].isna().any():   # ３連単が不成立などで組番が無いレース
+            continue
         res = (int(pr["３連単組番馬番1"]), int(pr["３連単組番馬番2"]), int(pr["３連単組番馬番3"]))
         payout = float(pr["３連単払戻金（円）"])
         ri = rinfo.loc[k]
