@@ -24,11 +24,12 @@ def tri_points(A, B, C):
     return [(a, b, c) for a in A for b in B for c in C if len({a, b, c}) == 3]
 
 
-def bets(nos, w):
-    """predict_race.suggest と同じ規則で (３連単の組, ３連複BOXの馬, 単勝の馬) を返す"""
-    if w[0] >= 0.40:
+def bets(nos, w, hi=0.40, mid=0.25):
+    """predict_race.suggest と同じ規則で (３連単の組, ３連複BOXの馬, 単勝の馬) を返す.
+    予想ファイルに「補正前勝率%」があれば 勝率%は補正後なので 境目は 50%/30% (win_calibrate.py)"""
+    if w[0] >= hi:
         return [], [], nos[0]
-    if w[0] >= 0.25:
+    if w[0] >= mid:
         return tri_points(nos[:2], nos[:4], nos[:5]), [], None
     return [], list(nos[:5]), None
 
@@ -62,7 +63,7 @@ def main():
             pos = x.set_index("馬番")["着順"]
             popn = x.set_index("馬番")["人気"]
             fav = x[x["人気"] == 1]
-            pts, box, tan = bets(nos, w)
+            pts, box, tan = bets(nos, w, *((0.50, 0.30) if "補正前勝率%" in g else (0.40, 0.25)))
             tan_pay = pr["単勝払戻金（円）"] if tan is not None and int(pr["単勝組番"]) == tan else 0
             hit_t = win in pts
             hit_b = bool(box) and set(win) <= set(box)

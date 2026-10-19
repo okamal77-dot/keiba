@@ -164,7 +164,7 @@ def pl_probs(w, pows=STAGE_POW):
     return top3, tri
 
 
-def suggest(w, tri, nos, order=None):
+def suggest(w, tri, nos, order=None, hi=0.40, mid=0.25):
     """勝率の形から買い目を作り, モデル上の的中確率を返す.
     本命の勝率 40%以上 (本命が堅い): 単勝◎ (1点). 締切時に◎が1.5倍以下なら 保険の 馬単 2・3位→◎ (2点) を足してもよい
         (9〜10月の430レースで 単勝だけ86% と 単勝+保険85% はほぼ同じ. 的中率は68%→83%に上がる)
@@ -176,18 +176,19 @@ def suggest(w, tri, nos, order=None):
         ただし 40〜50% で ◎が締切時に1番人気でないときは, 単勝をやめて 馬連 ◎-○ (1点) にする
         (直近3か月の検証で, この形の◎の勝率は14%・単勝回収率45%, 馬連 ◎-○ は80%. star_exacta.py)
     25〜40%: ３連単 1・2位 → 1〜4位 → 1〜5位
-    25%未満 (混戦): ３連複 1〜5位 BOX (10点)"""
+    25%未満 (混戦): ３連複 1〜5位 BOX (10点)
+    境目 hi/mid は 補正前の勝率での値. 補正後の勝率 (win_calibrate.py) では 50%/30% を渡す"""
     o = list((-w).argsort()) if order is None else list(order)  # order: 印の順 (◎○ のあとを 2〜3着補正で並べ替えた順など)
     n = nos
-    if w[o[0]] >= 0.40:
+    if w[o[0]] >= hi:
         ex = {(o[1], o[0]), (o[2], o[0])}
         pex = sum(v for c, v in tri.items() if c[:2] in ex)
         text = (f"単勝 {n[o[0]]} ※締切時に{n[o[0]]}が1.5倍以下なら 保険に "
                 f"馬単 {n[o[1]]},{n[o[2]]}→{n[o[0]]} 2点を足してもよい (回収率は同じ程度, 的中確率 {pex*100:.0f}%)")
-        if w[o[0]] < 0.50:
+        if w[o[0]] < hi + 0.10:
             text += f" ※締切時に{n[o[0]]}が1番人気でなければ 単勝はやめて 馬連 {n[o[0]]}-{n[o[1]]} 1点"
         return "本命", text, 1, w[o[0]]
-    if w[o[0]] >= 0.25:
+    if w[o[0]] >= mid:
         combos = [(i, j, k) for i in o[:2] for j in o[:4] for k in o[:5] if len({i, j, k}) == 3]
         text = f"３連単 {','.join(map(str, n[o[:2]]))} → {','.join(map(str, n[o[:4]]))} → {','.join(map(str, n[o[:5]]))}"
         return "2頭軸", text, len(combos), sum(tri[c] for c in combos)

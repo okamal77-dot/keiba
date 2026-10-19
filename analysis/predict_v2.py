@@ -25,6 +25,7 @@ import ev_select as EV
 import place_backtest as PB
 import predict_race as P
 import trifecta_factors as T
+import win_calibrate as WC
 
 KEY = T.KEY
 UR_RANK, UR_GAP = 5, 2  # 過小評価候補: 勝率順位 UR_RANK 位以内, 想定人気が勝率順位より UR_GAP 以上低い
@@ -215,10 +216,13 @@ def main():
     rt["過小評価候補"] = underrated(tg, rt)
     Xv, Mv, _, races_ix = P.pad(tg, f_new.loc[tg.index], with_order=False)
     Pw = P.win_probs(Xv, Mv, b, mu, sd)
+    wmap = WC.load_map()
     out = []
     for i, ix in enumerate(races_ix):
         x = tg.loc[ix]
-        w = Pw[i, :len(ix)]
+        # モデルの勝率はなだらかすぎるので 実績に合わせて補正する (win_calibrate.py). 期待値の補正 (EC) は補正前の勝率で決めたもの
+        w_raw = Pw[i, :len(ix)]
+        w = WC.calibrate(w_raw, wmap)
         top3, tri = P.pl_probs(w)
         nos = x["馬番"].astype(int).values
         # ◎○ は勝率順, ▲△△ 以降は 2〜3着補正 (第20節) を掛けた順 (place_backtest.py で ３連単・３連複の回収率が改善)
@@ -229,7 +233,7 @@ def main():
         oth = other_area(x, course).values
         kesi = (T.kesi(x) & (rk != "地方間交流")).values
         order = o[:2] + sorted(o[2:], key=lambda i: (kesi[i], -adj[i]))
-        kind, buy, npts, hit = P.suggest(w, tri, nos, order)
+        kind, buy, npts, hit = P.suggest(w, tri, nos, order, WC.HI, WC.MID)
         rank = np.empty(len(w), dtype=int)
         rank[order] = np.arange(len(w))
         marks = np.array(["◎", "○", "▲", "△", "△"] + [""] * 30)[rank]
@@ -257,7 +261,7 @@ def main():
             out.append({
                 "レース": int(row["レース番号"]), "レース名": row["レース名"], "距離": row["距離"], "印": marks[j],
                 "馬番": int(row["馬番"]), "馬名": row["馬名"], "騎手": row["騎手名"],
-                "勝率%": round(w[j] * 100, 1), "3着内率%": round(top3[j] * 100, 1),
+                "勝率%": round(w[j] * 100, 1), "3着内率%": round(top3[j] * 100, 1), "補正前勝率%": round(w_raw[j] * 100, 1),
                 "前走": f"{'' if pd.isna(row['前走着順']) else int(row['前走着順'])}着"
                         f"({'' if pd.isna(row['前走人気']) else int(row['前走人気'])}人気)",
                 "クラス変化": row["前走からの変化"], "近4走平均着順": None if pd.isna(row["近4走平均着順"]) else round(row["近4走平均着順"], 1),
