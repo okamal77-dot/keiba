@@ -25,6 +25,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 OUT = Path(__file__).parent / "out"
@@ -210,45 +211,53 @@ def estimate(t, r):
 
 
 # ---------------------------------------------------------------- 2. 着順確率モデル
+_PERMS = {}
+
+
+def perms(n):
+    if n not in _PERMS:
+        _PERMS[n] = np.array(list(itertools.permutations(range(n), 3)))
+    return _PERMS[n]
+
+
+def harville_arr(p2, p3, p1):
+    """p1: 1着の強さ, p2: 2着, p3: 3着. 全3頭順列 (配列) とその確率を返す."""
+    P = perms(len(p1))
+    i, j, k = P.T
+    v = p1[i] * p2[j] / (1 - p2[i]) * p3[k] / (1 - p3[i] - p3[j])
+    return P, v / v.sum()
+
+
 def harville(p2, p3, p1):
-    """p1: 1着の強さ, p2: 2着, p3: 3着. 全3頭順列の確率を返す."""
-    n = len(p1)
-    res = {}
-    for i, j, k in itertools.permutations(range(n), 3):
-        a = p1[i]
-        b = p2[j] / (1 - p2[i])
-        c = p3[k] / (1 - p3[i] - p3[j])
-        res[(i, j, k)] = a * b * c
-    tot = sum(res.values())
-    return {k: v / tot for k, v in res.items()}
+    P, v = harville_arr(np.asarray(p2), np.asarray(p3), np.asarray(p1))
+    return dict(zip(map(tuple, P.tolist()), v))
 
 
 def norm(v):
-    s = sum(v)
-    return [x / s for x in v]
+    v = np.asarray(v, dtype=float)
+    return v / v.sum()
 
 
 def strengths(base, a, mult2, mult3):
     """1着の強さは単勝オッズの比のまま. 2・3着は指数 a, 0.8a で平らにする (Lo-Bacon-Shone 型).
     単純な Harville は人気馬の2・3着を過大評価するため. 堅いレースで a>1 になるときだけ1着も尖らせる."""
-    p1 = norm([b ** max(1.0, a) for b in base])
-    p2 = norm([(b ** a) * m for b, m in zip(base, mult2)])
-    p3 = norm([(b ** (a * 0.8)) * m for b, m in zip(base, mult3)])
+    base = np.asarray(base, dtype=float)
+    p1 = norm(base ** max(1.0, a))
+    p2 = norm(base ** a * np.asarray(mult2))
+    p3 = norm(base ** (a * 0.8) * np.asarray(mult3))
     return p1, p2, p3
-
-
-def top4_prob(probs, pops):
-    return sum(v for (i, j, k), v in probs.items() if max(pops[i], pops[j], pops[k]) <= 4)
 
 
 def calibrate(base, pops, target, mult1, mult2, mult3):
     """上位4人気決着率が target になる 2・3着の指数を二分法で探す."""
+    P = perms(len(base))
+    top4 = (np.asarray(pops)[P] <= 4).all(1)
     lo, hi = 0.2, 2.0
     for _ in range(25):
         mid = (lo + hi) / 2
         p1, p2, p3 = strengths(base, mid, mult2, mult3)
-        p1 = norm([a * m for a, m in zip(p1, mult1)])
-        if top4_prob(harville(p2, p3, p1), pops) < target:
+        p1 = norm(p1 * np.asarray(mult1))
+        if harville_arr(p2, p3, p1)[1][top4].sum() < target:
             lo = mid
         else:
             hi = mid
@@ -339,7 +348,7 @@ def predict_race(t, r, hs):
     m1, m2, m3 = ([f[i] for f in fac] for i in range(3))
     a = calibrate(base, pops, t4, m1, m2, m3)
     p1, p2, p3 = strengths(base, a, m2, m3)
-    p1 = norm([a * m for a, m in zip(p1, m1)])
+    p1 = norm(p1 * np.asarray(m1))
     probs = harville(p2, p3, p1)
     ranked = sorted(probs.items(), key=lambda kv: -kv[1])
     v = verdict(pm, t4)
@@ -365,7 +374,8 @@ def predict_race(t, r, hs):
     risky = [fac[i][3] for i in range(n) if hs[i]["人気"] == 1 and fac[i][3]]
     return dict(track=tr, R=r["R"], pm=pm, t4=t4, verdict=v, notes=notes, k=k, hit=hit,
                 tickets=tickets, fav_in3=fav_in3, warn=warn, ana=ana, risky=risky,
-                form=formation(tickets), has_num=bool(hs and hs[0].get("馬番")))
+                form=formation(tickets), has_num=bool(hs and hs[0].get("馬番")),
+                probs={(num[i], num[j], num[kk]): p for (i, j, kk), p in probs.items()})
 
 
 # ---------------------------------------------------------------- predict_v2.py から使う関数
