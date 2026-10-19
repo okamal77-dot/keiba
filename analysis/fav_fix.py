@@ -1,10 +1,10 @@
-"""1.5倍以下の1番人気を 1着に固定する買い方 と 1・2着どちらでもよい買い方 の比較 (2026年9月, 確定単勝オッズのある期間).
+"""1.5倍以下の1番人気を 1着に固定する買い方 と 1・2着どちらでもよい買い方 の比較 (2026年9月〜, 確定単勝オッズのある期間).
 
 相手 a,b,c,d = 1番人気以外でモデル勝率 (交差検証の予想 pred2_underrated_rows_*.csv) の高い順.
 出力: analysis/out/favfix_rows.csv
 """
 import glob, itertools as it, pandas as pd, numpy as np
-o=pd.concat([pd.read_csv(f,encoding='utf-8-sig',dtype={'競走年月日':int}) for f in glob.glob('data/odds/202609_*_odds.csv')])
+o=pd.concat([pd.read_csv(f,encoding='utf-8-sig',dtype={'競走年月日':int}) for f in glob.glob('data/odds/2026*_odds.csv')])
 o=o[o['賭式']=='単勝'][['競馬場','競走年月日','レース番号','番号1','オッズ']].rename(columns={'番号1':'馬番','オッズ':'単オッズ'})
 o['馬番']=o['馬番'].astype(int)
 print('odds dates',o['競走年月日'].min(),o['競走年月日'].max())
@@ -12,7 +12,7 @@ r=pd.concat([pd.read_csv(f) for f in glob.glob('analysis/out/pred2_underrated_ro
 print('oof dates',r['競走年月日'].min(),r['競走年月日'].max(), r['競馬場'].unique())
 K=['競馬場','競走年月日','レース番号']
 m=r.merge(o,on=K+['馬番'],how='inner')
-p=pd.read_csv('data/202609_payback.csv',encoding='utf-8-sig')
+p=pd.concat([pd.read_csv(f'data/2026{m}_payback.csv',encoding='utf-8-sig') for m in ('09','10')])
 print('races with odds',m.groupby(K).ngroups)
 rows=[]
 for k,g in m.groupby(K):
