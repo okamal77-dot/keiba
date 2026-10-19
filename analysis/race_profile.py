@@ -1,11 +1,14 @@
-"""３連単の予想支援: 的中要因と競馬場別の万馬券特徴を合わせて, レースごとの買い目を出す.
+"""レースの荒れ判定: 競馬場別の万馬券の特徴 (REPORT_manbaken.md) から, レースごとに荒れやすさと買い目を出す.
+
+predict_v2.py からは profile() と ana_addon() を呼び, 能力モデルの買い目に「荒れ判定」と3着の押さえを足す.
+単独でも使える (出走表データ data/ が無くても, 集計表 analysis/out/*.csv だけで動く).
 
 入力 (どちらも UTF-8 CSV, 列名は analysis/predict_sample/ を参照):
   races.csv   : 競馬場,R,距離,馬場,頭数,クラス,種別,1人気オッズ
   runners.csv : 競馬場,R,馬番,人気,単勝オッズ,脚質,騎手,移籍   (任意. 無ければ人気順だけで出す)
 
 使い方:
-  python3 analysis/predict.py analysis/predict_sample/races.csv analysis/predict_sample/runners.csv
+  python3 analysis/race_profile.py analysis/predict_sample/races.csv analysis/predict_sample/runners.csv
 
 仕組み (詳細は analysis/REPORT_trifecta_strategy.md):
   1. 条件 (頭数・R番号・距離・馬場・種別・クラス・1番人気オッズ・年次傾向) から,
@@ -17,7 +20,9 @@
 """
 import itertools
 import math
+import re
 import sys
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -107,16 +112,21 @@ def baba_key(track, baba):
     return "水分~1.4%(重い)" if w < 1.5 else "1.5-2.4%" if w < 2.5 else "2.5%~(軽い)"
 
 
+LETTER = re.compile(r"(?<![A-Za-z])([ABC])(?![A-Za-z])")
+KIND = {"普通": "一般", "一般": "一般", "特別": "特別", "重賞": "重賞", "準重賞": "重賞"}
+
+
 def race_class(name):
-    """クラス欄の表記ゆれを top4_by_class のクラス名に寄せる."""
-    s = str(name or "")
-    for k in ["2歳", "3歳", "重賞"]:
-        if k in s:
-            return k
-    for k in ["A", "B", "C"]:
-        if s.upper().startswith(k):
-            return k
-    return None
+    """クラス欄・レース名を top4_by_class のクラス名に寄せる (class_transfer.race_class と同じ判定)."""
+    s = unicodedata.normalize("NFKC", str(name or ""))
+    if "重賞" in s:
+        return "重賞"
+    if "2歳" in s or "新馬" in s:
+        return "2歳"
+    if "3歳" in s and "3歳以上" not in s:
+        return "3歳"
+    m = LETTER.search(s.upper())
+    return m.group(1) if m else None
 
 
 # ---------------------------------------------------------------- 1. 条件からの推定
@@ -157,7 +167,7 @@ def estimate(t, r):
             notes.append(f"{label}{key} {v:.0%}")
 
     # 種別 (一般/特別/重賞): class_compare の「頭数補正後の差」をそのまま使う
-    kind = r["種別"] or "一般"
+    kind = KIND.get(r["種別"] or "一般", "一般")
     cls = race_class(r["クラス"])
     v = get(t["type"], (tr, kind), "頭数補正後の差")
     if v:
@@ -356,6 +366,87 @@ def predict_race(t, r, hs):
     return dict(track=tr, R=r["R"], pm=pm, t4=t4, verdict=v, notes=notes, k=k, hit=hit,
                 tickets=tickets, fav_in3=fav_in3, warn=warn, ana=ana, risky=risky,
                 form=formation(tickets), has_num=bool(hs and hs[0].get("馬番")))
+
+
+# ---------------------------------------------------------------- predict_v2.py から使う関数
+_TABLES = None
+
+
+def profile(course, rno, dist, baba, n, name, kind, fav_odds=None):
+    """1レースの荒れ判定. 戻り値: (推定万馬券率, 推定上位4人気決着率, 判定 堅/中/荒, 根拠のリスト)."""
+    global _TABLES
+    if _TABLES is None:
+        _TABLES = load()
+    course = ALIAS.get(course, course)
+    if course not in _TABLES["summary"].index:
+        return None
+    try:
+        dist = float(dist)
+    except (TypeError, ValueError):
+        dist = None
+    r = {"競馬場": course, "R": int(rno), "距離": dist, "馬場": baba, "頭数": int(n), "クラス": name,
+         "種別": kind if kind in KIND else None, "1人気オッズ": fav_odds}
+    pm, t4, notes = estimate(_TABLES, r)
+    return pm, t4, verdict(pm, t4), notes
+
+
+def ana_addon(course, verdict_, order, nos, pop, kesi, strength, jockeys, styles, n_pick=2):
+    """荒判定のレースで ３連単の3着に足す穴候補 (想定6番人気以下・消し以外・印の上位5頭以外).
+    strength: 2〜3着の強さ (predict_v2 の adj). 穴騎手 (穴期待比) と, その場で穴が多い脚質 (前走脚質) を掛けて選ぶ.
+    穴馬は3着に来ることが多い (3着内の穴馬の41〜46%が3着, 1着は約20%) ので, 足すのは3着だけにする.
+    戻り値: [(馬の位置, 理由)]"""
+    if verdict_ != "荒":
+        return []
+    global _TABLES
+    if _TABLES is None:
+        _TABLES = load()
+    course = ALIAS.get(course, course)
+    top5 = set(order[:5])
+    cand = []
+    for i in range(len(nos)):
+        if i in top5 or kesi[i] or not (pop[i] >= 6):
+            continue
+        f, why = float(strength[i]), []
+        key = (course, jockeys[i])
+        if key in _TABLES["jockey"].index and _TABLES["jockey"].loc[key, "穴期待比"] >= 1.2:
+            r = _TABLES["jockey"].loc[key, "穴期待比"]
+            f *= min(1.6, r) ** 0.7
+            why.append(f"穴騎手{jockeys[i]}({r:.2f}倍)")
+        st = styles[i]
+        if st in STYLES and course in _TABLES["style_ana"].index:
+            g = (_TABLES["style_ana"].loc[course, st] / _TABLES["style_ana"][st].mean()) ** 0.5
+            f *= g
+            if g >= 1.1:
+                why.append(f"前走{st}(この場の穴に多い)")
+        cand.append((f, i, why))
+    cand.sort(key=lambda c: -c[0])
+    return [(i, why) for _, i, why in cand[:n_pick]]
+
+
+def addon_text(course, verdict_, kind, order, nos, pop, kesi, strength, jockeys, styles, tri):
+    """predict_v2 の買い目 (predict_race.suggest) に足す一行と, その３連単の組 (馬番). 足すものが無ければ ("", []).
+    - 荒判定の2頭軸: ◎○ → 1〜4位 → 穴 を3着の押さえとして足す
+    - 堅判定の2頭軸で, 上位4人気決着の配当が安い場 (中央値2,700円未満: 笠松・金沢・高知・門別): ◎1着固定に絞る"""
+    if kind != "2頭軸":
+        return "", []
+    nos = list(nos)
+    if verdict_ == "荒":
+        ana = ana_addon(course, verdict_, order, nos, pop, kesi, strength, jockeys, styles)
+        if not ana:
+            return "", []
+        add = [(i, j, k) for i in order[:2] for j in order[:4] for k, _ in ana if len({i, j, k}) == 3]
+        return (f"荒判定の3着押さえ: ３連単 {','.join(str(nos[i]) for i in order[:2])} → "
+                f"{','.join(str(nos[i]) for i in order[:4])} → {','.join(str(nos[k]) for k, _ in ana)}"
+                f" (+{len(add)}点, 的中確率 +{sum(tri.get(c, 0) for c in add) * 100:.1f}%)"
+                + "".join(f" / {nos[k]}: {'・'.join(why) or '2〜3着の強さ上位'}" for k, why in ana),
+                [tuple(int(nos[i]) for i in c) for c in add])
+    if verdict_ == "堅" and TOP4_MEDIAN_PAY.get(ALIAS.get(course, course), 9e9) < 2700:
+        fix = [(order[0], j, k) for j in order[:4] for k in order[:5] if len({order[0], j, k}) == 3]
+        return (f"配当の安い場の堅いレース: ３連単は◎1着固定 {nos[order[0]]} → {','.join(str(nos[i]) for i in order[:4])}"
+                f" → {','.join(str(nos[i]) for i in order[:5])} ({len(fix)}点, 的中確率 "
+                f"{sum(tri.get(c, 0) for c in fix) * 100:.0f}%) に絞るか見送り",
+                [tuple(int(nos[i]) for i in c) for c in fix])
+    return "", []
 
 
 # ---------------------------------------------------------------- 入出力

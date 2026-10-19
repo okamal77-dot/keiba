@@ -68,6 +68,11 @@ def main():
             hit_b = bool(box) and set(win) <= set(box)
             kesi = g[g["消し"].astype(str) == "True"]["馬番"].tolist() if "消し" in g else \
                 g[g["注記"].fillna("").str.contains("消し")]["馬番"].tolist()
+            # 荒れ判定 (race_profile.py) と追加の買い目. 2026年10月20日より前の予想には無い
+            rough = str(g["荒れ判定"].iloc[0]) if "荒れ判定" in g and pd.notna(g["荒れ判定"].iloc[0]) else ""
+            mv = re.match(r"【(.)】", rough)
+            extra = str(g["追加の組"].iloc[0]) if "追加の組" in g and pd.notna(g["追加の組"].iloc[0]) else ""
+            extra = [tuple(int(v) for v in c.split("-")) for c in extra.split(";") if c]
             rows.append({
                 "モデル": model, "競馬場": course, "R": rno, "◎": nos[0], "◎の人気": popn.get(nos[0]),
                 "◎の着順": pos.get(nos[0]), "1番人気の着順": fav["着順"].iloc[0] if len(fav) else np.nan,
@@ -78,6 +83,8 @@ def main():
                 "３連複点数": 10 if box else 0, "３連複払戻": pr["３連複払戻金（円）"] if hit_b else 0,
                 "単勝◎払戻": pr["単勝払戻金（円）"] if int(pr["単勝組番"]) == nos[0] else 0,
                 "推奨単勝点数": 1 if tan is not None else 0, "推奨単勝払戻": tan_pay,
+                "荒れ判定": mv.group(1) if mv else "", "万馬券": pr["３連単払戻金（円）"] >= 10000,
+                "追加点数": len(extra), "追加払戻": pr["３連単払戻金（円）"] if win in extra else 0,
             })
     t = pd.DataFrame(rows)
     t.to_csv(OUT / f"review_{date}.csv", index=False, encoding="utf-8-sig")
@@ -98,6 +105,8 @@ def main():
             "推奨買い目 合計回収率%": (g["推奨単勝払戻"].sum() + g["３連単払戻"].sum() + g["３連複払戻"].sum())
             / max((g["推奨単勝点数"].sum() + g["３連単点数"].sum() + g["３連複点数"].sum()) * 100, 1) * 100,
             "消しの3着内": f"{g['消しの3着内'].sum()}/{g['消し該当'].sum()}",
+            "追加 的中": f"{(g['追加払戻'] > 0).sum()}/{(g['追加点数'] > 0).sum()}",
+            "追加 回収率%": g["追加払戻"].sum() / max(g["追加点数"].sum() * 100, 1) * 100,
         })
     s = t.groupby(["モデル", "競馬場"]).apply(summ)
     tot = t.groupby("モデル").apply(summ)
@@ -105,7 +114,12 @@ def main():
     res = pd.concat([s, tot]).sort_index()
     print(res.round(1).to_string())
     print()
-    print(t[["モデル", "競馬場", "R", "◎", "◎の人気", "◎の着順", "1番人気の着順", "印5頭の3着内数", "結果", "３連単配当", "３連単払戻", "３連複払戻"]].to_string(index=False))
+    j = t[t["荒れ判定"] != ""]
+    if len(j):
+        print("== 荒れ判定と実際の万馬券率 (%)")
+        print(j.groupby("荒れ判定")["万馬券"].agg(["size", "mean"]).assign(mean=lambda d: d["mean"] * 100).round(1).to_string())
+        print()
+    print(t[["モデル", "競馬場", "R", "荒れ判定", "◎", "◎の人気", "◎の着順", "1番人気の着順", "印5頭の3着内数", "結果", "３連単配当", "３連単払戻", "３連複払戻"]].to_string(index=False))
 
 
 if __name__ == "__main__":

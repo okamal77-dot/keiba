@@ -5,6 +5,8 @@
 - 2026年9月分は確定オッズもあるため、**人気順位の代わりにオッズで補正した検証**も行った（第9節）
 - 再現手順: `python3 analysis/trifecta_factors.py <dataディレクトリ>`（集計表は `analysis/out/tf_*.csv`）、`python3 analysis/longshot_payout.py <dataディレクトリ>`（穴馬の回収率、`analysis/out/ls_*.csv`）、`python3 analysis/class_payout.py <dataディレクトリ>`（クラス別の回収率、`analysis/out/cls_*.csv`）、`python3 analysis/ability_index.py <dataディレクトリ>`（能力値、`analysis/out/ab_*.csv`）、`python3 analysis/favorite_drivers.py <dataディレクトリ>`（1番人気の決まり方、`analysis/out/fav_*.csv`）
 
+- 予想での使い方（競馬場別の荒れ判定との組み合わせ）: `REPORT_trifecta_strategy.md`
+
 ## 分析の方法 ― 人気の影響を差し引き、4年とも同じかを確かめる
 
 どの要因も人気と強く結びついています（例: 前走で速い時計を出した馬は人気になる）。そのため、単純な3着内率で比べると、ほとんどが「人気の言い換え」になります。
