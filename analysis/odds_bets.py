@@ -9,6 +9,8 @@
 騎手の補正 (jockey_adjust.py, analysis/out/jk_table.csv): 1番人気の騎手が, その競馬場の1番人気で人気ほど勝たない
   (縮小A/E 0.95未満, 1番人気30回以上) ときは, 馬単 1→2〜5 を見送り扱いにする (9〜10月の検証で回収率77%, ほかは86〜87%).
   ３連単は同じ分け方で逆の結果 (117%) が出たが, 高配当数本によるもので変えない.
+クラスの補正 (class_bets.py, 第8-6節): A級は 1強 でも ３連単を6点 (1→2,3,4→2,3,4) にする
+  (2021〜2026年の人気順で, A級の2点は6点より13.6ポイント低く, 3期間とも同じ向き). クラスはレース名から判定する.
 
 使い方:
   python3 analysis/odds_bets.py <オッズCSV> [<オッズCSV> ...]
@@ -19,12 +21,16 @@
   python3 analysis/odds_bets.py --date 20261020 analysis/odds_log/snapshots.csv   (日付で絞る)
   python3 analysis/odds_bets.py --entries data/entries/20261020_horselist.csv ...   (騎手名を出走表から補う)
   python3 analysis/odds_bets.py --jockey-sheet data/entries/20261020_horselist.csv  (オッズ前の騎手メモだけ出す)
+  レース名 (クラスの判定用) は, オッズCSVにあればそれを, 無ければ --races のレース一覧 (racelist 形式) を使う.
+  --date を付けると data/entries/<日付>_racelist.csv があれば自動で読む.
 """
 import argparse
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from race_profile import race_class
 
 KEY = ["競馬場", "競走年月日", "レース番号"]
 SHAPES = ["1強", "2強", "3強", "4強"]
@@ -56,7 +62,7 @@ def read_odds(paths):
         if "記録時刻" in x.columns:                  # snapshots.csv: レースごとに最新の記録
             last = x.groupby(KEY)["記録時刻"].transform("max")
             x = x[x["記録時刻"] == last]
-        out.append(x[[c for c in KEY + ["馬番", "単勝オッズ", "騎手"] if c in x.columns]])
+        out.append(x[[c for c in KEY + ["馬番", "単勝オッズ", "騎手", "レース名"] if c in x.columns]])
     d = pd.concat(out, ignore_index=True)
     d["単勝オッズ"] = pd.to_numeric(d["単勝オッズ"], errors="coerce")
     d["馬番"] = pd.to_numeric(d["馬番"], errors="coerce")
@@ -70,8 +76,9 @@ def shape_of(odds):
     return SHAPES[int(np.argmax(ratios))], ratios
 
 
-def bets(nos, odds, fav_ae=None):
-    """nos, odds: 人気順 (オッズの低い順). fav_ae: 1番人気の騎手のその場の1番人気での縮小A/E. 戻り値: dict"""
+def bets(nos, odds, fav_ae=None, cls=None):
+    """nos, odds: 人気順 (オッズの低い順). fav_ae: 1番人気の騎手のその場の1番人気での縮小A/E.
+    cls: クラス (race_class の値. "A" なら 1強 でも6点). 戻り値: dict"""
     if len(nos) < 5:
         return {"形": "-", "３連単": "見送り (5頭未満)", "馬単": "見送り (5頭未満)", "点数3": 0, "点数2": 0, "注記": ""}
     shape, ratios = shape_of(odds)
@@ -86,13 +93,16 @@ def bets(nos, odds, fav_ae=None):
         tri, pts3 = "見送り (1番人気が3倍以上)", 0
     elif shape in ("3強", "4強"):
         tri, pts3 = f"{n1} → {n2},{n3},{n4} → {n2},{n3},{n4} (6点)", 6
+    elif shape == "1強" and cls == "A":
+        tri, pts3 = f"{n1} → {n2},{n3},{n4} → {n2},{n3},{n4} (6点)", 6
+        notes.append("A級のため1強でも6点 (A級の2点は6点より約14ポイント低い)")
     elif shape == "1強":
         tri, pts3 = f"{n1} → {n2},{n3} → {n2},{n3} (2点)", 2
     else:
         tri, pts3 = "見送り (2強: 安定した買い方がない)", 0
-    if odds[3] / odds[1] <= 1.6 and pts3 == 6:
+    if odds[3] / odds[1] <= 1.6 and shape in ("3強", "4強") and pts3 == 6:
         notes.append("2〜4番人気がとくに接近 (検証で回収率100%前後の区間)")
-    return {"形": shape, "1〜5番人気のオッズ": " / ".join(f"{o:.1f}" for o in odds[:5]),
+    return {"形": shape, "クラス": cls or "", "1〜5番人気のオッズ": " / ".join(f"{o:.1f}" for o in odds[:5]),
             "３連単": tri, "馬単": exacta, "点数3": pts3, "点数2": pts2, "注記": " / ".join(notes)}
 
 
@@ -122,6 +132,7 @@ def main():
     ap.add_argument("files", nargs="+")
     ap.add_argument("--date", type=int)
     ap.add_argument("--entries", help="騎手名を補う出走表 (horselist 形式)")
+    ap.add_argument("--races", nargs="*", default=[], help="レース名を補うレース一覧 (racelist 形式, クラスの判定用)")
     ap.add_argument("--jockey-sheet", action="store_true", help="files を出走表とみなし, 騎手メモだけ出す")
     a = ap.parse_args()
     jk = load_jockey()
@@ -136,15 +147,24 @@ def main():
         d = d.drop(columns=["騎手"], errors="ignore").merge(e, on=KEY + ["馬番"], how="left").rename(columns={"騎手名": "騎手"})
     if a.date:
         d = d[d["競走年月日"] == a.date]
+        auto = Path(__file__).parent.parent / "data" / "entries" / f"{a.date}_racelist.csv"
+        if auto.exists() and str(auto) not in a.races:
+            a.races.append(str(auto))
+    if a.races:
+        rl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False)[KEY + ["レース名"]] for f in a.races])
+        rl = rl.drop_duplicates(KEY).rename(columns={"レース名": "レース名_一覧"})
+        d = d.merge(rl, on=KEY, how="left")
+        d["レース名"] = d["レース名"].fillna(d["レース名_一覧"]) if "レース名" in d else d["レース名_一覧"]
     rows = []
     for k, g in d.groupby(KEY):
         g = g.sort_values(["単勝オッズ", "馬番"])
         fav_ae = jk_ae(jk, g["騎手"].iloc[0], k[0], "1番人気") if "騎手" in g else None
-        b = bets(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), fav_ae)
+        name = g["レース名"].dropna().iloc[0] if "レース名" in g and g["レース名"].notna().any() else None
+        b = bets(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), fav_ae, race_class(name) if name else None)
         rows.append({"競馬場": k[0], "日付": k[1], "R": k[2], **b})
     out = pd.DataFrame(rows)
     for _, r in out.iterrows():
-        print(f"{r['競馬場']} {r['R']}R  形:{r['形']}  オッズ(1〜5番人気): {r.get('1〜5番人気のオッズ', '')}")
+        print(f"{r['競馬場']} {r['R']}R  形:{r['形']}  クラス:{r.get('クラス') or '不明'}  オッズ(1〜5番人気): {r.get('1〜5番人気のオッズ', '')}")
         print(f"  ３連単: {r['３連単']}")
         print(f"  馬単  : {r['馬単']}" + (f"\n  注記  : {r['注記']}" if r["注記"] else ""))
     out_path = Path(__file__).parent / "out" / f"odds_bets_{a.date or 'all'}.csv"
