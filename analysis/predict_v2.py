@@ -231,17 +231,14 @@ def main():
         kesi = (T.kesi(x) & (rk != "地方間交流")).values
         order = o[:2] + sorted(o[2:], key=lambda i: (kesi[i], -adj[i]))
         kind, buy, npts, hit = P.suggest(w, tri, nos, order)
-        # 競馬場・条件ごとの荒れ判定 (race_profile.py, REPORT_trifecta_strategy.md). 能力モデルの買い目はそのままにし,
-        # 荒判定の2頭軸だけ 3着に穴を押さえる. 堅判定で配当の安い場は点数を絞る注記を出す
+        # 競馬場・条件ごとの荒れ判定 (race_profile.py). 表示だけで買い目は変えない: 2026年1〜9月の検証で
+        # 判定は実際の万馬券率とよく合ったが, 荒判定の3着押さえ・堅判定の点数絞りはどちらも回収率を下げた (第7章)
         x0 = x.iloc[0]
         prof = RP.profile(course, x0["レース番号"], x0["距離"], x0["馬場"], len(x), x0["レース名"], x0["競走種類名称"])
-        rough, addon, extra = "", "", []
+        rough = ""
         if prof:
             pm, t4, v, why = prof
             rough = f"【{v}】推定万馬券率{pm*100:.0f}%・上位4人気決着{t4*100:.0f}% ({' / '.join(why)})"
-            pops = rt.loc[ix, "想定人気"].values
-            addon, extra = RP.addon_text(course, v, kind, order, nos, pops, kesi, adj, x["騎手名"].values,
-                                  x["前走脚質"].values, tri)
         rank = np.empty(len(w), dtype=int)
         rank[order] = np.arange(len(w))
         marks = np.array(["◎", "○", "▲", "△", "△"] + [""] * 30)[rank]
@@ -283,8 +280,6 @@ def main():
                 "注記": " / ".join(flags),
                 "買い目": f"[{kind}] {buy} ({npts}点, モデル上の的中確率 {hit*100:.0f}%)" if j == 0 else "",
                 "荒れ判定": rough if j == 0 else "",
-                "追加の買い目": addon if j == 0 else "",
-                "追加の組": ";".join("-".join(map(str, c)) for c in extra) if j == 0 else "",
             })
     o = pd.DataFrame(out)
     # 各レースの期待値上位 (消しを除き, 補正後の期待値1.0以上を高い順に3頭まで).
@@ -300,13 +295,11 @@ def main():
     pd.set_option("display.width", 250)
     for k, g in o.groupby("レース"):
         print(f"\n## {k}R {g['レース名'].iloc[0]} {g['距離'].iloc[0]}m")
-        print(g.sort_values("勝率%", ascending=False).drop(columns=["レース", "レース名", "距離", "買い目", "荒れ判定", "追加の買い目", "追加の組"]
+        print(g.sort_values("勝率%", ascending=False).drop(columns=["レース", "レース名", "距離", "買い目", "荒れ判定"]
                                                          ).to_string(index=False))
         print("買い目:", g["買い目"].iloc[0])
         if g["荒れ判定"].iloc[0]:
             print("荒れ判定:", g["荒れ判定"].iloc[0])
-        if g["追加の買い目"].iloc[0]:
-            print("追加:", g["追加の買い目"].iloc[0])
         e = g[g["期待値順"].notna()].sort_values("期待値順")
         if len(e):
             print("期待値上位:", " / ".join(f"{r.馬番} {r.馬名} (期待値{r['期待値(補正)']}, 補正オッズ{r.補正オッズ}倍)" for _, r in e.iterrows()))

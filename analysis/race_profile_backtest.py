@@ -151,10 +151,6 @@ def main():
     d.to_csv(OUT / "rpb_races.csv", index=False, encoding="utf-8-sig")
     pd.set_option("display.width", 250, "display.max_columns", 40)
 
-    def roi(g, col):
-        pts = g[col + "_点数"].sum() if col + "_点数" in g else g["点数"].sum()
-        return g[col + "_払戻" if col else "払戻"].sum() / max(pts * 100, 1) * 100
-
     # ---- (1) 判定ごとの実績
     def summ(g):
         s = {"レース数": len(g), "推定万馬券率%": g["推定万馬券率"].mean() * 100, "実際の万馬券率%": g["万馬券"].mean() * 100,

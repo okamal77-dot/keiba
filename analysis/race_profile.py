@@ -1,6 +1,8 @@
 """レースの荒れ判定: 競馬場別の万馬券の特徴 (REPORT_manbaken.md) から, レースごとに荒れやすさと買い目を出す.
 
-predict_v2.py からは profile() と ana_addon() を呼び, 能力モデルの買い目に「荒れ判定」と3着の押さえを足す.
+predict_v2.py からは profile() を呼び, 能力モデルの予想に「荒れ判定」を表示する (買い目は変えない).
+2026年1〜9月の検証 (race_profile_backtest.py) で, 判定は実際の万馬券率とよく合うが, 判定に合わせて
+買い目を変えても回収率は上がらなかった (REPORT_trifecta_strategy.md 第7章).
 単独でも使える (出走表データ data/ が無くても, 集計表 analysis/out/*.csv だけで動く).
 
 入力 (どちらも UTF-8 CSV, 列名は analysis/predict_sample/ を参照):
@@ -364,7 +366,8 @@ def predict_race(t, r, hs):
     warn = []
     pay = TOP4_MEDIAN_PAY.get(tr)
     if v == "堅" and pay and pay < k * 100 * 1.5:
-        warn.append(f"上位4頭決着の中央値{pay:,.0f}円に対し{k}点はトリガミ注意 → 1着固定で6〜9点に絞る")
+        warn.append(f"上位4頭決着の中央値{pay:,.0f}円に対し{k}点はトリガミになりやすい. 点数を絞っても回収率は上がらない"
+                    "(1着固定9点67%・2頭軸18点76%) ので, 買うなら点数はそのままで金額を抑えるか見送り")
     if v == "荒":
         warn.append("上位3人気だけの組み合わせは除外済み. 穴は3着付けを厚く")
     if risky_fav(fac, hs):
@@ -402,6 +405,7 @@ def profile(course, rno, dist, baba, n, name, kind, fav_odds=None):
 
 def ana_addon(course, verdict_, order, nos, pop, kesi, strength, jockeys, styles, n_pick=2):
     """荒判定のレースで ３連単の3着に足す穴候補 (想定6番人気以下・消し以外・印の上位5頭以外).
+    ※ 検証用. 2頭軸に足すと足した分の回収率は63% (2頭軸だけは71%) で, 買い目には使わない.
     strength: 2〜3着の強さ (predict_v2 の adj). 穴騎手 (穴期待比) と, その場で穴が多い脚質 (前走脚質) を掛けて選ぶ.
     穴馬は3着に来ることが多い (3着内の穴馬の41〜46%が3着, 1着は約20%) ので, 足すのは3着だけにする.
     戻り値: [(馬の位置, 理由)]"""
@@ -431,32 +435,6 @@ def ana_addon(course, verdict_, order, nos, pop, kesi, strength, jockeys, styles
         cand.append((f, i, why))
     cand.sort(key=lambda c: -c[0])
     return [(i, why) for _, i, why in cand[:n_pick]]
-
-
-def addon_text(course, verdict_, kind, order, nos, pop, kesi, strength, jockeys, styles, tri):
-    """predict_v2 の買い目 (predict_race.suggest) に足す一行と, その３連単の組 (馬番). 足すものが無ければ ("", []).
-    - 荒判定の2頭軸: ◎○ → 1〜4位 → 穴 を3着の押さえとして足す
-    - 堅判定の2頭軸で, 上位4人気決着の配当が安い場 (中央値2,700円未満: 笠松・金沢・高知・門別): ◎1着固定に絞る"""
-    if kind != "2頭軸":
-        return "", []
-    nos = list(nos)
-    if verdict_ == "荒":
-        ana = ana_addon(course, verdict_, order, nos, pop, kesi, strength, jockeys, styles)
-        if not ana:
-            return "", []
-        add = [(i, j, k) for i in order[:2] for j in order[:4] for k, _ in ana if len({i, j, k}) == 3]
-        return (f"荒判定の3着押さえ: ３連単 {','.join(str(nos[i]) for i in order[:2])} → "
-                f"{','.join(str(nos[i]) for i in order[:4])} → {','.join(str(nos[k]) for k, _ in ana)}"
-                f" (+{len(add)}点, 的中確率 +{sum(tri.get(c, 0) for c in add) * 100:.1f}%)"
-                + "".join(f" / {nos[k]}: {'・'.join(why) or '2〜3着の強さ上位'}" for k, why in ana),
-                [tuple(int(nos[i]) for i in c) for c in add])
-    if verdict_ == "堅" and TOP4_MEDIAN_PAY.get(ALIAS.get(course, course), 9e9) < 2700:
-        fix = [(order[0], j, k) for j in order[:4] for k in order[:5] if len({order[0], j, k}) == 3]
-        return (f"配当の安い場の堅いレース: ３連単は◎1着固定 {nos[order[0]]} → {','.join(str(nos[i]) for i in order[:4])}"
-                f" → {','.join(str(nos[i]) for i in order[:5])} ({len(fix)}点, 的中確率 "
-                f"{sum(tri.get(c, 0) for c in fix) * 100:.0f}%) に絞るか見送り",
-                [tuple(int(nos[i]) for i in c) for c in fix])
-    return "", []
 
 
 # ---------------------------------------------------------------- 入出力
