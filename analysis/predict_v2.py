@@ -6,6 +6,7 @@
        + 能力値 (近5走の平均走破タイム・平均上がり3F・位置取り・先行率)            ... 第13節
        + 前走の着差, 昇級・降級 (賞金比), 調教師の成績, 通算勝率                    ... 第14節
        + クラス変化 (前走から / 4走前から), 近4走平均着順, 割引・加点の組み合わせ   ... 第16節
+       + 血統 (父・母父の条件別 A/E), 当日の馬場傾向 (同じ日の前のレースの 前有利・内有利) ... 第27節 (extra_features.py)
 対象場の 2024年1月〜検証開始前で学習し, 直近3か月で predict_race.py の旧モデルと比較 → 全期間で再学習して予想.
 過小評価候補: 勝率順位5位以内なのに想定人気 (同じ項目で人気の順番を予測したモデル, 実際の人気が分かればそれ) が
              勝率順位より2つ以上低い馬 (消し条件は除く). 直近3か月で実際の人気に対する A/E を検証して表示する.
@@ -22,6 +23,7 @@ import favorite_drivers as F
 import favorite_extra as X
 import ev_calibrate as EC
 import ev_select as EV
+import extra_features as E
 import place_backtest as PB
 import predict_race as P
 import race_profile as RP
@@ -86,7 +88,8 @@ def class_features(h):
     return h
 
 
-def build(d, jr_course, jr_all):
+def build(d, jr_course, jr_all, new=False):
+    """new=True: 第27節の項目 (血統・当日の馬場, extra_features.py) も足す. d に E.add_blood / E.add_bias の列が必要"""
     f = P.build_features(d, jr_course)
     a = A.features(d, jr_all)
     for c in ["平均走破タイム", "平均上がり3F", "先行率", "位置取り"]:
@@ -109,6 +112,9 @@ def build(d, jr_course, jr_all):
     f["4走前から下がった"] = (t < 0).astype(float).values
     f["好成績で組・段が下がった"] = ((t < 0) & (d["近4走平均着順"] <= 2.5)).astype(float).values
     f["中央からの転入"] = d["中央からの転入"].values
+    if new:
+        for c in E.BLOOD + E.BIAS:
+            f[c] = d[c].fillna(0).values
     return f
 
 
@@ -116,6 +122,9 @@ def main():
     data, hfile, rfile, course = sys.argv[1:5]
     h, _, _ = T.load()
     e, r = P.load_entries(hfile, rfile, course)
+    # 当日すでに終わったレースの4角位置 (当日の馬場傾向に使う). レース一覧に通過順があるときだけ
+    if "コーナー通過順1" in r.columns and r["コーナー通過順1"].notna().any():
+        e = e.merge(T.styles(r), on=KEY + ["馬番"], how="left")
     h = pd.concat([h, e], ignore_index=True)
     h["予想対象"] = h["予想対象"].astype("boolean").fillna(False).astype(bool)
     races = pd.concat([T.read(f) for y in T.YEARS for f in T.FILES[y][1]], ignore_index=True).drop_duplicates(KEY)
@@ -128,13 +137,15 @@ def main():
     m = h["予想対象"]
     h.loc[m, "1着賞金(円)"] = prize.reindex(pd.MultiIndex.from_frame(h.loc[m, KEY])).values
     h = class_features(h)
+    h = E.add_blood(h, last_start=h.loc[h["予想対象"], "日付"].min())
+    h = E.add_bias(h)
     jr_c = P.jockey_rate(h, course)
     jr_a = A.jockey_rates(h)
     q_idx = h.loc[h["年"] >= 2024, "指数"].quantile([1 / 3, 2 / 3]).values
     d = h[(h["競馬場"] == course) & (h["年"] >= 2024)].copy()
     d.index = range(len(d))
     f_old = P.build_features(d, jr_c)
-    f_new = build(d, jr_c, jr_a)
+    f_new = build(d, jr_c, jr_a, new=True)
 
     hist = d[~d["予想対象"]]
     cut = hist["日付"].max() - pd.DateOffset(months=P.VALID_MONTHS)
