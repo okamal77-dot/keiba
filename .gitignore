@@ -2,3 +2,4 @@ data/
 __pycache__/
 *.zip
 analysis/out/koryu_rows_*.csv
+analysis/out/ft_rows.csv
