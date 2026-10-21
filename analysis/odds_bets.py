@@ -183,6 +183,7 @@ def main():
     ap.add_argument("--date", type=int)
     ap.add_argument("--entries", help="騎手名を補う出走表 (horselist 形式)")
     ap.add_argument("--races", nargs="*", default=[], help="レース名を補うレース一覧 (racelist 形式, クラスの判定用)")
+    ap.add_argument("--budget", type=int, default=BUDGET, help="1レースの上限 (３連単+馬単, 円. 既定1000)")
     ap.add_argument("--jockey-sheet", action="store_true", help="files を出走表とみなし, 騎手メモだけ出す")
     a = ap.parse_args()
     jk = load_jockey()
@@ -212,15 +213,15 @@ def main():
         name = g["レース名"].dropna().iloc[0] if "レース名" in g and g["レース名"].notna().any() else None
         b = bets(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), fav_ae, race_class(name) if name else None)
         if b["点数3"] or b["点数2"]:
-            b["配分(1000円)"] = fmt_alloc(allocate(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), b))
+            b["配分"] = fmt_alloc(allocate(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), b, a.budget))
         rows.append({"競馬場": k[0], "日付": k[1], "R": k[2], **b})
     out = pd.DataFrame(rows)
     for _, r in out.iterrows():
         print(f"{r['競馬場']} {r['R']}R  形:{r['形']}  クラス:{r.get('クラス') or '不明'}  オッズ(1〜5番人気): {r.get('1〜5番人気のオッズ', '')}")
         print(f"  ３連単: {r['３連単']}")
         print(f"  馬単  : {r['馬単']}" + (f"\n  注記  : {r['注記']}" if r["注記"] else ""))
-        if isinstance(r.get("配分(1000円)"), str):
-            print(f"  配分  : {r['配分(1000円)']}")
+        if isinstance(r.get("配分"), str):
+            print(f"  配分  : {r['配分']}")
     out_path = Path(__file__).parent / "out" / f"odds_bets_{a.date or 'all'}.csv"
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"\n{len(out)}レース, ３連単 {int(out['点数3'].sum())}点・馬単 {int(out['点数2'].sum())}点 → {out_path}")
