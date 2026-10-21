@@ -21,6 +21,7 @@
   python3 analysis/odds_bets.py --date 20261020 analysis/odds_log/snapshots.csv   (日付で絞る)
   python3 analysis/odds_bets.py --entries data/entries/20261020_horselist.csv ...   (騎手名を出走表から補う)
   python3 analysis/odds_bets.py --jockey-sheet data/entries/20261020_horselist.csv  (オッズ前の騎手メモだけ出す)
+  配分: 1レース1,000円 (３連単+馬単) の配分も出す (第8-8節). 1強は馬単に全額, ほかは半分ずつ, 組ごとは当たりにくい組ほど厚く.
   レース名 (クラスの判定用) は, オッズCSVにあればそれを, 無ければ --races のレース一覧 (racelist 形式) を使う.
   --date を付けると data/entries/<日付>_racelist.csv があれば自動で読む.
 """
@@ -37,6 +38,7 @@ SHAPES = ["1強", "2強", "3強", "4強"]
 JK_PATH = Path(__file__).parent / "out" / "jk_table.csv"
 JK_MIN = 30          # この騎乗数未満の騎手×競馬場×人気帯は補正に使わない
 FAV_WEAK = 0.95      # 1番人気でこれ未満なら馬単1着固定を見送り扱い
+BUDGET = 1000        # 配分の例: 1レースの上限 (３連単+馬単)
 
 
 def load_jockey():
@@ -106,6 +108,54 @@ def bets(nos, odds, fav_ae=None, cls=None):
             "３連単": tri, "馬単": exacta, "点数3": pts3, "点数2": pts2, "注記": " / ".join(notes)}
 
 
+def harville(odds_by_no):
+    """単勝オッズ {馬番: オッズ} から勝率 (1/オッズを合計1に揃えたもの) を返す"""
+    q = {n: 1 / o for n, o in odds_by_no.items()}
+    t = sum(q.values())
+    return {n: v / t for n, v in q.items()}
+
+
+def units(w, budget):
+    """重み w に比例して budget を100円単位で配る (最大剰余法). 戻り値: 円のリスト"""
+    w = np.asarray(w, float)
+    n = budget // 100
+    if w.sum() <= 0 or n == 0:
+        return [0] * len(w)
+    x = w / w.sum() * n
+    u = np.floor(x)
+    for i in np.argsort(-(x - u))[: int(n - u.sum())]:
+        u[i] += 1
+    return [int(v) * 100 for v in u]
+
+
+def allocate(nos, odds, b, budget=BUDGET):
+    """1レース budget 円 (３連単+馬単の合計) の配分 (第8-8節, stake_alloc.py).
+    1強 は馬単だけに全額, ほかは ３連単・馬単 に半分ずつ (片方だけ買うならその券種に全額).
+    買い目ごとの金額は Harville 式の確率に反比例 (当たりにくい組ほど厚く. 人気どうしの組は0円になることがある).
+    戻り値: [(券種, 組, 金額)]"""
+    p = harville(dict(zip(nos, odds)))
+    n1, n2, n3, n4, n5 = nos[:5]
+    mates = {6: (n2, n3, n4), 2: (n2, n3)}.get(b["点数3"], ())
+    tri = [(n1, x, y) for x in mates for y in mates if x != y]
+    ex = [(n1, x) for x in (n2, n3, n4, n5)] if b["点数2"] else []
+    if b["形"] == "1強" and ex:
+        tri = []
+    b3 = budget if not ex else (budget // 2 if tri else 0)
+    b2 = budget - b3 if ex else 0
+    w3 = [1 / (p[a] * p[c] / (1 - p[a]) * p[d] / (1 - p[a] - p[c])) for a, c, d in tri]
+    w2 = [1 / (p[a] * p[c] / (1 - p[a])) for a, c in ex]
+    return [("３連単", t, y) for t, y in zip(tri, units(w3, b3))] + [("馬単", t, y) for t, y in zip(ex, units(w2, b2))]
+
+
+def fmt_alloc(al):
+    out = []
+    for kind in ["３連単", "馬単"]:
+        xs = [f"{'-'.join(map(str, t))} {y}円" for k, t, y in al if k == kind and y > 0]
+        if xs:
+            out.append(f"{kind}: " + " / ".join(xs))
+    return "  ".join(out)
+
+
 def jockey_sheet(entries, jk):
     """オッズが出る前の騎手メモ: 1番人気になったときの強弱 (縮小A/E 1.10以上 / 0.90以下) と, 人気薄で人気以上に勝つ騎手 (1.15以上)"""
     h = pd.read_csv(entries, encoding="utf-8-sig", low_memory=False)
@@ -161,12 +211,16 @@ def main():
         fav_ae = jk_ae(jk, g["騎手"].iloc[0], k[0], "1番人気") if "騎手" in g else None
         name = g["レース名"].dropna().iloc[0] if "レース名" in g and g["レース名"].notna().any() else None
         b = bets(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), fav_ae, race_class(name) if name else None)
+        if b["点数3"] or b["点数2"]:
+            b["配分(1000円)"] = fmt_alloc(allocate(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), b))
         rows.append({"競馬場": k[0], "日付": k[1], "R": k[2], **b})
     out = pd.DataFrame(rows)
     for _, r in out.iterrows():
         print(f"{r['競馬場']} {r['R']}R  形:{r['形']}  クラス:{r.get('クラス') or '不明'}  オッズ(1〜5番人気): {r.get('1〜5番人気のオッズ', '')}")
         print(f"  ３連単: {r['３連単']}")
         print(f"  馬単  : {r['馬単']}" + (f"\n  注記  : {r['注記']}" if r["注記"] else ""))
+        if isinstance(r.get("配分(1000円)"), str):
+            print(f"  配分  : {r['配分(1000円)']}")
     out_path = Path(__file__).parent / "out" / f"odds_bets_{a.date or 'all'}.csv"
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"\n{len(out)}レース, ３連単 {int(out['点数3'].sum())}点・馬単 {int(out['点数2'].sum())}点 → {out_path}")

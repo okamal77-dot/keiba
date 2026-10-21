@@ -34,8 +34,27 @@ def test_weak_fav_jockey():
     assert b["点数2"] == 0 and b["馬単"].startswith("見送り")
 
 
+def test_allocate_budget_and_shape():
+    nos, odds = [1, 2, 3, 4, 5, 6], [1.9, 2.9, 4.9, 9.8, 10.1, 20.0]   # 3強
+    b = OB.bets(nos, odds)
+    al = OB.allocate(nos, odds, b)
+    assert sum(y for _, _, y in al) == 1000
+    assert sum(y for k, _, y in al if k == "３連単") == 500
+    assert all(y % 100 == 0 for _, _, y in al)
+    ex = {t: y for k, t, y in al if k == "馬単"}
+    assert ex[(1, 5)] >= ex[(1, 2)]          # 当たりにくい組ほど厚い
+
+
+def test_allocate_one_strong_goes_to_exacta():
+    nos, odds = [1, 2, 3, 4, 5], [1.5, 6.0, 7.0, 9.0, 12.0]          # 1強
+    al = OB.allocate(nos, odds, OB.bets(nos, odds))
+    assert {k for k, _, _ in al} == {"馬単"} and sum(y for _, _, y in al) == 1000
+
+
 if __name__ == "__main__":
     test_shapes()
     test_class_a()
     test_weak_fav_jockey()
+    test_allocate_budget_and_shape()
+    test_allocate_one_strong_goes_to_exacta()
     print("ok")

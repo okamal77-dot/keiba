@@ -8,6 +8,7 @@
   均等       : 買い目ごとに同じ金額
   払戻均等   : どれが当たっても払戻がほぼ同じになるよう, 金額をその組の確定オッズに反比例させる (確定オッズを使うので先読みあり)
   確率比例   : 単勝オッズから Harville 式で出した組の確率に比例 (単勝オッズだけで決まる. 払戻均等の近似)
+  1/確率比例 : Harville の確率に反比例 (当たりにくい組ほど厚く. 単勝オッズだけで決まる. 人気どうしの組は0円になることがある)
   割安だけ   : Harville の確率 × その組のオッズ が 1 以上の組だけを均等に買う (確定オッズを使うので先読みあり)
 券種の割合: ３連単と馬単の両方を買うレースで, 1,000円のうち ３連単に回す割合. 片方だけ買うレースはその券種に1,000円.
 9月で傾向を見て, 10月で同じ向きかを確かめる. 回収率の90%区間はレース単位のブートストラップ.
@@ -28,7 +29,7 @@ OUT = Path(__file__).parent / "out"
 KEY = OB.KEY
 BUDGET = 1000
 SPLITS = [0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
-METHODS = ["均等", "払戻均等", "確率比例", "割安だけ"]
+METHODS = ["均等", "払戻均等", "確率比例", "1/確率比例", "割安だけ"]
 
 
 def load():
@@ -70,6 +71,8 @@ def alloc(method, odds, prob, budget):
         return units(1 / odds, budget)
     if method == "確率比例":
         return units(prob, budget)
+    if method == "1/確率比例":
+        return units(1 / prob, budget)
     ok = prob * odds >= 1
     return units(ok.astype(float), budget)
 
@@ -123,10 +126,12 @@ def races(od, pay, jkn, names):
 
 
 def simulate(rs, method, split):
+    """split: ３連単の割合 (数値), または 形ごとの割合 {形: 割合}"""
     rows = []
     for r in rs:
+        sp = split[r["形"]] if isinstance(split, dict) else split
         has3, has2 = len(r["tri"]) > 0, len(r["ex"]) > 0
-        b3 = BUDGET if not has2 else (0 if not has3 else int(round(BUDGET * split / 100)) * 100)
+        b3 = BUDGET if not has2 else (0 if not has3 else int(round(BUDGET * sp / 100)) * 100)
         b2 = BUDGET - b3 if has2 else 0
         s3 = alloc(method, r["t_odds"], r["t_prob"], b3) if has3 else np.zeros(0)
         s2 = alloc(method, r["e_odds"], r["e_prob"], b2) if has2 else np.zeros(0)
@@ -171,6 +176,22 @@ def main():
     t = pd.DataFrame(rows)
     t.round(1).to_csv(OUT / "sa_grid.csv", index=False, encoding="utf-8-sig")
     print(t.round(1).to_string(index=False))
+
+    # 採用した配分 (odds_bets.allocate): 1強は馬単に全額, ほかは半分ずつ, 組ごとは 1/確率比例. 均等・半々との差 (対応のあるブートストラップ)
+    base = simulate(rs, "均等", 0.5)
+    rng = np.random.default_rng(2)
+    rows = []
+    for name, m, sp in [("均等・半々", "均等", 0.5), ("均等・1強は馬単だけ", "均等", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5}),
+                        ("1/確率比例・半々", "1/確率比例", 0.5),
+                        ("1/確率比例・1強は馬単だけ (採用)", "1/確率比例", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5})]:
+        d = simulate(rs, m, sp)
+        diff = (d["払戻"] - base["払戻"]).to_numpy()
+        bs = diff[rng.integers(0, len(d), (2000, len(d)))].sum(1) / base["投資"].sum() * 100
+        rows.append({"配分": name, **summary(d), "均等・半々との差": diff.sum() / base["投資"].sum() * 100,
+                     "差の90%区間": f"{np.percentile(bs, 5):+.1f}〜{np.percentile(bs, 95):+.1f}"})
+    t0 = pd.DataFrame(rows)
+    t0.round(1).to_csv(OUT / "sa_adopted.csv", index=False, encoding="utf-8-sig")
+    print("\n== 採用した配分と均等の比較\n", t0.round(1).to_string(index=False))
 
     # 形ごと (均等・確率比例, 割合0.5)
     rows = []
