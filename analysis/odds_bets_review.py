@@ -3,6 +3,7 @@
 使い方: python3 analysis/odds_bets_review.py <オッズCSV> <払戻CSV> [--races <racelist.csv>] [--entries <horselist.csv>]
   オッズCSV: odds_bets.py と同じ形式 (確定オッズ・snapshots.csv など). 払戻CSV: payback 形式.
   払戻のあるレースだけを集計する. オッズが締切前の値なら, 当日買ったときの判定と同じになる.
+1レース1,000円の配分 (odds_bets.allocate) の成績も出す.
 出力: 標準出力とanalysis/out/obr_<日付>.csv
 """
 import argparse
@@ -51,7 +52,13 @@ def main():
         r3 = tuple(int(pr[c]) for c in ["３連単組番馬番1", "３連単組番馬番2", "３連単組番馬番3"]) \
             if pd.notna(pr["３連単組番馬番1"]) else None
         r2 = (int(pr["馬単組番1"]), int(pr["馬単組番2"])) if pd.notna(pr["馬単組番1"]) else None
+        # 1レース1,000円の配分 (第8-8節, odds_bets.allocate)
+        al = OB.allocate(nos, g["単勝オッズ"].tolist(), b) if (b["点数3"] or b["点数2"]) else []
+        a_inv = sum(y for _, _, y in al)
+        a_ret = sum(y / 100 * (pr["３連単払戻金（円）"] if kd == "３連単" else pr["馬単払戻金（円）"])
+                    for kd, t, y in al if (kd == "３連単" and t == r3) or (kd == "馬単" and t == r2))
         rows.append({"競馬場": k[0], "R": k[2], "形": b["形"], "クラス": b.get("クラス", ""),
+                     "配分投資": a_inv, "配分払戻": a_ret,
                      "結果": "-".join(map(str, r3)) if r3 else "",
                      "結果の人気": "-".join(str(nos.index(x) + 1) if x in nos else "?" for x in r3) if r3 else "",
                      "３連単": b["３連単"], "３連単点数": len(tri),
@@ -60,7 +67,7 @@ def main():
                      "３連単配当": pr["３連単払戻金（円）"], "馬単配当": pr["馬単払戻金（円）"]})
     t = pd.DataFrame(rows).sort_values(["競馬場", "R"])
     pd.set_option("display.width", 250, "display.max_colwidth", 40)
-    print(t[["競馬場", "R", "形", "クラス", "結果", "結果の人気", "３連単点数", "３連単払戻", "馬単点数", "馬単払戻", "３連単配当", "馬単配当"]]
+    print(t[["競馬場", "R", "形", "クラス", "結果", "結果の人気", "３連単点数", "３連単払戻", "馬単点数", "馬単払戻", "配分投資", "配分払戻", "３連単配当", "馬単配当"]]
           .to_string(index=False))
     for name in ["３連単", "馬単"]:
         pts, ret = t[f"{name}点数"].sum(), t[f"{name}払戻"].sum()
@@ -69,6 +76,8 @@ def main():
     pts = t["３連単点数"].sum() + t["馬単点数"].sum()
     ret = t["３連単払戻"].sum() + t["馬単払戻"].sum()
     print(f"合計: {pts * 100:,}円 → {ret:,.0f}円 (回収率 {ret / max(pts * 100, 1) * 100:.0f}%)")
+    ai, ar = t["配分投資"].sum(), t["配分払戻"].sum()
+    print(f"1,000円の配分: {(t['配分投資'] > 0).sum()}レース {ai:,.0f}円 → {ar:,.0f}円 (回収率 {ar / max(ai, 1) * 100:.0f}%)")
     date = int(d["競走年月日"].iloc[0])
     t.to_csv(Path(__file__).parent / "out" / f"obr_{date}.csv", index=False, encoding="utf-8-sig")
 
