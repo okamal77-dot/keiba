@@ -33,7 +33,8 @@ METHODS = ["均等", "払戻均等", "確率比例", "1/確率比例", "割安�
 
 
 def load():
-    of = sorted((DATA / "odds").glob("2026*_odds.csv")) + sorted((DATA / "entries").glob("*_odds_*.csv"))
+    # 同じレースは確定オッズ (*_final_odds.csv) を優先する (朝の時点のオッズファイルより後に読む)
+    of = sorted((DATA / "entries").glob("*_odds_*.csv")) + sorted((DATA / "odds").glob("2026*_odds.csv"), key=lambda f: "final" in f.name)
     od = []
     for f in of:
         x = pd.read_csv(f, encoding="utf-8-sig", low_memory=False)
