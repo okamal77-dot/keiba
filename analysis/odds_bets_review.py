@@ -52,6 +52,8 @@ def main():
         r3 = tuple(int(pr[c]) for c in ["３連単組番馬番1", "３連単組番馬番2", "３連単組番馬番3"]) \
             if pd.notna(pr["３連単組番馬番1"]) else None
         r2 = (int(pr["馬単組番1"]), int(pr["馬単組番2"])) if pd.notna(pr["馬単組番1"]) else None
+        if r3 is None and r2 is None:      # 取り止め・不成立 (返還) のレースは数えない
+            continue
         # 1レース1,000円の配分 (第8-8節, odds_bets.allocate)
         al = OB.allocate(nos, g["単勝オッズ"].tolist(), b) if (b["点数3"] or b["点数2"]) else []
         a_inv = sum(y for _, _, y in al)
