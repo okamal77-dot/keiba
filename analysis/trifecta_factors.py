@@ -30,9 +30,9 @@ FILES = {  # 年: (出走馬, レース一覧, 払戻) のファイル名リス�
     2023: (["2023_horselist_全月まとめ.csv"], ["race2023.csv"], ["pay2023.csv"]),
     2024: (["2024_horselist_全月まとめ.csv"], ["race2024.csv"], ["pay2024.csv"]),
     2025: (["2025_horselist_全月まとめ.csv"], ["race2025.csv"], ["pay2025.csv"]),
-    2026: (["2026_horselist_1-8月まとめ.csv", "202609_horselist.csv", "202610_horselist.csv"],
-           ["race2026.csv", "202609_racelist.csv", "202610_racelist.csv"],
-           ["pay2026.csv", "202609_payback.csv", "202610_payback.csv"]),
+    2026: (["2026_horselist_1-8月まとめ.csv", "202609_horselist.csv", "202610_horselist.csv", "202611_horselist.csv"],
+           ["race2026.csv", "202609_racelist.csv", "202610_racelist.csv", "202611_racelist.csv"],
+           ["pay2026.csv", "202609_payback.csv", "202610_payback.csv", "202611_payback.csv"]),
 }
 # 手元に無いファイル (2024年のレース一覧, 10月分など) は飛ばす. レース一覧が無い年は距離・馬場・脚質が欠ける
 _missing = [f for y in FILES for lst in FILES[y] for f in lst if not (DATA / f).exists()]

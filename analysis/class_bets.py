@@ -27,7 +27,8 @@ YEARS = [("2021_horselist_全月まとめ.csv", "race2021.csv", "pay2021.csv"),
          ("2025_horselist_全月まとめ.csv", "race2025.csv", "pay2025.csv"),
          ("2026_horselist_1-8月まとめ.csv", "race2026.csv", "pay2026.csv"),
          ("202609_horselist.csv", "202609_racelist.csv", "202609_payback.csv"),
-         ("202610_horselist.csv", "202610_racelist.csv", "202610_payback.csv")]
+         ("202610_horselist.csv", "202610_racelist.csv", "202610_payback.csv"),
+    ("202611_horselist.csv", "202611_racelist.csv", "202611_payback.csv")]
 ORDER = ["2歳", "3歳", "C", "B", "A", "重賞", "その他"]
 C3 = ["３連単組番馬番1", "３連単組番馬番2", "３連単組番馬番3", "３連単払戻金（円）"]
 C2 = ["馬単組番1", "馬単組番2", "馬単払戻金（円）"]

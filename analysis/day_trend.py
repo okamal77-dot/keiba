@@ -23,7 +23,8 @@ KEY = ["競馬場", "競走年月日", "レース番号"]
 FILES = [(f"{y}_horselist_全月まとめ.csv", f"race{y}.csv", f"pay{y}.csv") for y in range(2021, 2026)] + [
     ("2026_horselist_1-8月まとめ.csv", "race2026.csv", "pay2026.csv"),
     ("202609_horselist.csv", "202609_racelist.csv", "202609_payback.csv"),
-    ("202610_horselist.csv", "202610_racelist.csv", "202610_payback.csv")]
+    ("202610_horselist.csv", "202610_racelist.csv", "202610_payback.csv"),
+    ("202611_horselist.csv", "202611_racelist.csv", "202611_payback.csv")]
 CORNERS = [f"コーナー通過順{i}" for i in range(1, 9)]
 METRICS = {
     "1番人気が勝つ": "fav1",
