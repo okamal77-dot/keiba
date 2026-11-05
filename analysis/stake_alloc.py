@@ -11,7 +11,8 @@
   1/確率比例 : Harville の確率に反比例 (当たりにくい組ほど厚く. 単勝オッズだけで決まる. 人気どうしの組は0円になることがある)
   割安だけ   : Harville の確率 × その組のオッズ が 1 以上の組だけを均等に買う (確定オッズを使うので先読みあり)
 券種の割合: ３連単と馬単の両方を買うレースで, 1,000円のうち ３連単に回す割合. 片方だけ買うレースはその券種に1,000円.
-9月で傾向を見て, 10月で同じ向きかを確かめる. 回収率の90%区間はレース単位のブートストラップ.
+9月で傾向を見て, 10月・11月で同じ向きかを確かめる.
+  1/√確率比例: 1/確率比例 を弱めたもの. 1/確率比例(最低100円): 全部の組に100円を置き, 残りを 1/確率比例 で配る. 回収率の90%区間はレース単位のブートストラップ.
 出力: analysis/out/sa_*.csv
 """
 import sys
@@ -29,7 +30,7 @@ OUT = Path(__file__).parent / "out"
 KEY = OB.KEY
 BUDGET = 1000
 SPLITS = [0.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
-METHODS = ["均等", "払戻均等", "確率比例", "1/確率比例", "割安だけ"]
+METHODS = ["均等", "払戻均等", "確率比例", "1/確率比例", "1/√確率比例", "1/確率比例(最低100円)", "割安だけ"]
 
 
 def load():
@@ -40,13 +41,14 @@ def load():
         x = pd.read_csv(f, encoding="utf-8-sig", low_memory=False)
         od.append(x[x["賭式"].isin(["単勝", "３連単", "馬単"])])
     od = pd.concat(od).drop_duplicates(KEY + ["賭式", "番号1", "番号2", "番号3"], keep="last")
-    pf = [DATA / "202609_payback.csv", DATA / "202610_payback.csv"] + sorted((DATA / "entries").glob("*_payback*.csv"))
+    MON = ["202609", "202610", "202611"]
+    pf = [DATA / f"{m}_payback.csv" for m in MON] + sorted((DATA / "entries").glob("*_payback*.csv"))
     pay = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False) for f in pf if f.exists()])
     pay = pay.drop_duplicates(KEY, keep="last").set_index(KEY)
-    hf = [DATA / "202609_horselist.csv", DATA / "202610_horselist.csv"] + sorted((DATA / "entries").glob("*_horselist.csv"))
+    hf = [DATA / f"{m}_horselist.csv" for m in MON] + sorted((DATA / "entries").glob("*_horselist.csv"))
     hl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False, usecols=KEY + ["馬番", "騎手名"]) for f in hf if f.exists()])
     jkn = hl.drop_duplicates(KEY + ["馬番"], keep="last").set_index(KEY + ["馬番"])["騎手名"]
-    rf = [DATA / "202609_racelist.csv", DATA / "202610_racelist.csv"] + sorted((DATA / "entries").glob("*_racelist.csv"))
+    rf = [DATA / f"{m}_racelist.csv" for m in MON] + sorted((DATA / "entries").glob("*_racelist.csv"))
     rl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False, usecols=KEY + ["レース名"]) for f in rf if f.exists()])
     names = rl.drop_duplicates(KEY, keep="last").set_index(KEY)["レース名"]
     return od, pay, jkn, names
@@ -74,6 +76,13 @@ def alloc(method, odds, prob, budget):
         return units(prob, budget)
     if method == "1/確率比例":
         return units(1 / prob, budget)
+    if method == "1/√確率比例":
+        return units(1 / np.sqrt(prob), budget)
+    if method == "1/確率比例(最低100円)":
+        n = len(odds)
+        if budget < 100 * n:
+            return units(1 / prob, budget)
+        return 100 + units(1 / prob, budget - 100 * n)
     ok = prob * odds >= 1
     return units(ok.astype(float), budget)
 
@@ -156,9 +165,10 @@ def summary(d):
     roi = lambda x: x["払戻"].sum() / max(x["投資"].sum(), 1) * 100  # noqa: E731
     lo, hi = ci(d)
     m9 = d[d["競走年月日"] < 20261001]
-    m10 = d[d["競走年月日"] >= 20261001]
+    m10 = d[(d["競走年月日"] >= 20261001) & (d["競走年月日"] < 20261101)]
+    m11 = d[d["競走年月日"] >= 20261101]
     return {"レース数": len(d), "投資": d["投資"].sum(), "払戻": d["払戻"].sum(), "回収率%": roi(d),
-            "90%区間": f"{lo:.0f}〜{hi:.0f}", "9月%": roi(m9), "10月%": roi(m10),
+            "90%区間": f"{lo:.0f}〜{hi:.0f}", "9月%": roi(m9), "10月%": roi(m10), "11月%": roi(m11) if len(m11) else np.nan,
             "的中レース%": (d["払戻"] > 0).mean() * 100,
             "３連単 回収率%": d["払戻3"].sum() / max(d["投資3"].sum(), 1) * 100,
             "馬単 回収率%": d["払戻2"].sum() / max(d["投資2"].sum(), 1) * 100,
@@ -184,7 +194,11 @@ def main():
     rows = []
     for name, m, sp in [("均等・半々", "均等", 0.5), ("均等・1強は馬単だけ", "均等", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5}),
                         ("1/確率比例・半々", "1/確率比例", 0.5),
-                        ("1/確率比例・1強は馬単だけ (採用)", "1/確率比例", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5})]:
+                        ("1/確率比例・1強は馬単だけ (採用)", "1/確率比例", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5}),
+                        ("1/√確率比例・1強は馬単だけ", "1/√確率比例", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5}),
+                        ("1/確率比例(最低100円)・1強は馬単だけ", "1/確率比例(最低100円)", {"1強": 0.0, "2強": 0.5, "3強": 0.5, "4強": 0.5}),
+                        ("均等・3強4強は３連単多め(0.7)", "均等", {"1強": 0.0, "2強": 0.5, "3強": 0.7, "4強": 0.7}),
+                        ("1/確率比例・3強4強は３連単多め(0.7)", "1/確率比例", {"1強": 0.0, "2強": 0.5, "3強": 0.7, "4強": 0.7})]:
         d = simulate(rs, m, sp)
         diff = (d["払戻"] - base["払戻"]).to_numpy()
         bs = diff[rng.integers(0, len(d), (2000, len(d)))].sum(1) / base["投資"].sum() * 100
