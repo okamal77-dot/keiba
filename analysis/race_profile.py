@@ -122,7 +122,7 @@ KIND = {"普通": "一般", "一般": "一般", "特別": "特別", "重賞": "�
 def race_class(name):
     """クラス欄・レース名を top4_by_class のクラス名に寄せる (class_transfer.race_class と同じ判定)."""
     s = unicodedata.normalize("NFKC", str(name or ""))
-    if "重賞" in s:
+    if "重賞" in s and "重賞開催" not in s:
         return "重賞"
     if "2歳" in s or "新馬" in s:
         return "2歳"
