@@ -128,8 +128,8 @@ def main():
              "貢献 (ポイント)": roi("全部") - roi(v), "貢献の90%区間": ci(full - b),
              "投資の変化(全部−外す, 円/100R)": (d["全部_投"].sum() - d[v + "_投"].sum()) / len(d) * 100,
              "収支の変化(円/100R)": ((d["全部_払"] - d["全部_投"]).sum() - (d[v + "_払"] - d[v + "_投"]).sum()) / len(d) * 100}
-        for lab, mk in [("9月", m == 202609), ("10月", m == 202610), ("11月", m == 202611)]:
-            r[lab + "の貢献"] = roi("全部", d[mk]) - roi(v, d[mk])
+        for mo in sorted(m.unique()):
+            r[f"{mo % 100}月の貢献"] = roi("全部", d[m == mo]) - roi(v, d[m == mo])
         out.append(r)
     dd = d.dropna(subset=["配分_投"])
     ii2 = rng.integers(0, len(dd), (2000, len(dd)))
@@ -137,8 +137,8 @@ def main():
          "全部の回収率": roi("配分", dd), "貢献 (ポイント)": roi("配分", dd) - roi("均等1000", dd),
          "貢献の90%区間": ci(boot("配分", dd, ii2) - boot("均等1000", dd, ii2))}
     mm = dd["競走年月日"] // 100
-    for lab, mk in [("9月", mm == 202609), ("10月", mm == 202610), ("11月", mm == 202611)]:
-        r[lab + "の貢献"] = roi("配分", dd[mk]) - roi("均等1000", dd[mk])
+    for mo in sorted(mm.unique()):
+        r[f"{mo % 100}月の貢献"] = roi("配分", dd[mm == mo]) - roi("均等1000", dd[mm == mo])
     out.append(r)
     t = pd.DataFrame(out)
     pd.set_option("display.width", 250, "display.max_columns", 20)

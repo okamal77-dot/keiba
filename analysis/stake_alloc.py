@@ -42,13 +42,13 @@ def load():
         od.append(x[x["賭式"].isin(["単勝", "３連単", "馬単"])])
     od = pd.concat(od).drop_duplicates(KEY + ["賭式", "番号1", "番号2", "番号3"], keep="last")
     MON = ["202609", "202610", "202611"]
-    pf = [DATA / f"{m}_payback.csv" for m in MON] + sorted((DATA / "entries").glob("*_payback*.csv"))
+    pf = [DATA / "pay2026.csv"] + [DATA / f"{m}_payback.csv" for m in MON] + sorted((DATA / "entries").glob("*_payback*.csv"))
     pay = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False) for f in pf if f.exists()])
     pay = pay.drop_duplicates(KEY, keep="last").set_index(KEY)
-    hf = [DATA / f"{m}_horselist.csv" for m in MON] + sorted((DATA / "entries").glob("*_horselist.csv"))
+    hf = [DATA / "2026_horselist_1-8月まとめ.csv"] + [DATA / f"{m}_horselist.csv" for m in MON] + sorted((DATA / "entries").glob("*_horselist.csv"))
     hl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False, usecols=KEY + ["馬番", "騎手名"]) for f in hf if f.exists()])
     jkn = hl.drop_duplicates(KEY + ["馬番"], keep="last").set_index(KEY + ["馬番"])["騎手名"]
-    rf = [DATA / f"{m}_racelist.csv" for m in MON] + sorted((DATA / "entries").glob("*_racelist.csv"))
+    rf = [DATA / "race2026.csv"] + [DATA / f"{m}_racelist.csv" for m in MON] + sorted((DATA / "entries").glob("*_racelist.csv"))
     rl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False, usecols=KEY + ["レース名"]) for f in rf if f.exists()])
     names = rl.drop_duplicates(KEY, keep="last").set_index(KEY)["レース名"]
     return od, pay, jkn, names
