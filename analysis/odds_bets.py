@@ -64,11 +64,46 @@ def read_odds(paths):
         if "記録時刻" in x.columns:                  # snapshots.csv: レースごとに最新の記録
             last = x.groupby(KEY)["記録時刻"].transform("max")
             x = x[x["記録時刻"] == last]
-        out.append(x[[c for c in KEY + ["馬番", "単勝オッズ", "騎手", "レース名"] if c in x.columns]])
+        out.append(x[[c for c in KEY + ["馬番", "単勝オッズ", "騎手", "レース名", "馬名"] if c in x.columns]])
     d = pd.concat(out, ignore_index=True)
     d["単勝オッズ"] = pd.to_numeric(d["単勝オッズ"], errors="coerce")
     d["馬番"] = pd.to_numeric(d["馬番"], errors="coerce")
     return d[(d["単勝オッズ"] > 0) & d["馬番"].notna()].drop_duplicates(KEY + ["馬番"], keep="last")
+
+
+STYLE_PATH = Path(__file__).parent / "out" / "horse_style.csv"
+
+
+def load_styles():
+    """馬名 → 今の脚質 (horse_style.py の表. 同名は最終出走日が新しい方)"""
+    if not STYLE_PATH.exists():
+        return {}
+    t = pd.read_csv(STYLE_PATH, encoding="utf-8-sig").sort_values("最終出走日")
+    return dict(zip(t["馬名"].astype(str).str.strip(), t["脚質"]))
+
+
+def b1_check(nos, odds, names, styles):
+    """３連単 1→4,5,6→4,5,6 (6点, 第8-18節補足2) の条件 (同じデータから選んだ条件. 12月以降の新しいレースで検証中).
+    条件: 1強 / 4番人気のオッズが3番人気の3倍未満 / 1番人気が先行か差し / 2番人気が追込以外 / 3番人気が差し以外.
+    戻り値: 表示用の文字列 (1強でなければ None)"""
+    shape, _ = shape_of(odds)
+    if shape != "1強" or len(nos) < 6:
+        return None
+    st = [styles.get(str(n).strip(), "不明") if isinstance(n, str) else "不明" for n in names[:3]]
+    tag = f"(脚質 1番人気{st[0]}・2番人気{st[1]}・3番人気{st[2]})"
+    ng = []
+    if odds[3] / odds[2] >= 3:
+        ng.append("4番人気が3番人気の3倍以上")
+    if st[0] not in ("先行", "差し"):
+        ng.append(f"1番人気が{st[0]}")
+    if st[1] in ("追込", "不明"):
+        ng.append(f"2番人気が{st[1]}")
+    if st[2] in ("差し", "不明"):
+        ng.append(f"3番人気が{st[2]}")
+    combo = f"{nos[0]} → {nos[3]},{nos[4]},{nos[5]} → {nos[3]},{nos[4]},{nos[5]} (6点)"
+    if ng:
+        return f"条件外 ({' / '.join(ng)}) {tag}"
+    return f"★条件に当てはまる: ３連単 {combo} {tag} ※検証中の条件"
 
 
 def shape_of(odds):
@@ -201,6 +236,13 @@ def main():
         auto = Path(__file__).parent.parent / "data" / "entries" / f"{a.date}_racelist.csv"
         if auto.exists() and str(auto) not in a.races:
             a.races.append(str(auto))
+    if "馬名" not in d.columns or d["馬名"].isna().all():
+        ef = [a.entries] if a.entries else ([str(Path(__file__).parent.parent / "data" / "entries" / f"{a.date}_horselist.csv")] if a.date else [])
+        ef = [f for f in ef if f and Path(f).exists()]
+        if ef:
+            e = pd.read_csv(ef[0], encoding="utf-8-sig", low_memory=False)[KEY + ["馬番", "馬名"]]
+            d = d.drop(columns=["馬名"], errors="ignore").merge(e, on=KEY + ["馬番"], how="left")
+    styles = load_styles()
     if a.races:
         rl = pd.concat([pd.read_csv(f, encoding="utf-8-sig", low_memory=False)[KEY + ["レース名"]] for f in a.races])
         rl = rl.drop_duplicates(KEY).rename(columns={"レース名": "レース名_一覧"})
@@ -214,6 +256,8 @@ def main():
         b = bets(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), fav_ae, race_class(name) if name else None)
         if b["点数3"] or b["点数2"]:
             b["配分"] = fmt_alloc(allocate(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), b, a.budget))
+        if "馬名" in g:
+            b["②-1"] = b1_check(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), g["馬名"].tolist(), styles)
         rows.append({"競馬場": k[0], "日付": k[1], "R": k[2], **b})
     out = pd.DataFrame(rows)
     for _, r in out.iterrows():
@@ -222,6 +266,8 @@ def main():
         print(f"  馬単  : {r['馬単']}" + (f"\n  注記  : {r['注記']}" if r["注記"] else ""))
         if isinstance(r.get("配分"), str):
             print(f"  配分  : {r['配分']}")
+        if isinstance(r.get("②-1"), str):
+            print(f"  ②-1  : {r['②-1']}")
     out_path = Path(__file__).parent / "out" / f"odds_bets_{a.date or 'all'}.csv"
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"\n{len(out)}レース, ３連単 {int(out['点数3'].sum())}点・馬単 {int(out['点数2'].sum())}点 → {out_path}")
