@@ -106,6 +106,36 @@ def b1_check(nos, odds, names, styles):
     return f"★条件に当てはまる: ３連単 {combo} {tag} ※検証中の条件"
 
 
+def c1_check(nos, odds):
+    """３連単 1番人気→2,3番人気→2〜8番人気 (約12点, 第8-19節補足. c1_odds.py) の目安.
+    買う目安: 1番人気が1.5倍以下 か 4番人気が3番人気の3倍以上.
+    避ける: 2番人気と3番人気のオッズ差が1.1倍以内 / 10倍以下が5頭以上 / 1番人気が2.6倍以上.
+    どの条件でも回収率は80〜88%で, 100%を安定して超えるものはない."""
+    if len(nos) < 6:
+        return None
+    n1, n2, n3 = nos[:3]
+    thirds = [x for x in nos[1:8]]
+    pts = 2 * (len(thirds) - 1)
+    combo = f"{n1} → {n2},{n3} → {','.join(map(str, thirds))} ({pts}点)"
+    ng = []
+    if odds[2] / odds[1] <= 1.1:
+        ng.append("2番人気と3番人気がほぼ同じオッズ")
+    if sum(o <= 10 for o in odds) >= 5:
+        ng.append("10倍以下が5頭以上")
+    if odds[0] >= 2.6:
+        ng.append("1番人気が2.6倍以上")
+    if ng:
+        return f"避ける ({' / '.join(ng)})"
+    good = []
+    if odds[0] <= 1.5:
+        good.append("1番人気が1.5倍以下")
+    if odds[3] / odds[2] >= 3:
+        good.append("4番人気が3番人気の3倍以上")
+    if good:
+        return f"★買う目安: ３連単 {combo} ({' / '.join(good)})"
+    return f"目安なし (買うなら ３連単 {combo})"
+
+
 def shape_of(odds):
     """オッズ (昇順) の上位5頭から, 隣り合う人気のオッズ比が最も大きい位置を返す"""
     o = odds[:5]
@@ -258,6 +288,7 @@ def main():
             b["配分"] = fmt_alloc(allocate(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), b, a.budget))
         if "馬名" in g:
             b["②-1"] = b1_check(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist(), g["馬名"].tolist(), styles)
+        b["③"] = c1_check(g["馬番"].astype(int).tolist(), g["単勝オッズ"].tolist())
         rows.append({"競馬場": k[0], "日付": k[1], "R": k[2], **b})
     out = pd.DataFrame(rows)
     for _, r in out.iterrows():
@@ -268,6 +299,8 @@ def main():
             print(f"  配分  : {r['配分']}")
         if isinstance(r.get("②-1"), str):
             print(f"  ②-1  : {r['②-1']}")
+        if isinstance(r.get("③"), str):
+            print(f"  ③    : {r['③']}")
     out_path = Path(__file__).parent / "out" / f"odds_bets_{a.date or 'all'}.csv"
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"\n{len(out)}レース, ３連単 {int(out['点数3'].sum())}点・馬単 {int(out['点数2'].sum())}点 → {out_path}")
