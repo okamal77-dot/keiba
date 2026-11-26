@@ -51,7 +51,7 @@ def main():
     top["順"] = top.groupby(KEY).cumcount()
     f1 = top[top["順"] == 0][KEY + ["番号1", "o"]].rename(columns={"番号1": "馬番", "o": "1人気オッズ"})
     f2 = top[top["順"] == 1][KEY + ["o"]].rename(columns={"o": "2人気オッズ"})
-    st = h[KEY + ["馬番", "着順", "事前脚質"]]
+    st = h[KEY + ["馬番", "着順", "事前脚質", "馬場"]]
     o = f1.merge(f2, on=KEY).merge(st, on=KEY + ["馬番"], how="inner")
     o["オッズ帯"] = pd.cut(o["1人気オッズ"], [0, 1.3, 1.5, 1.8, 2.0, 2.5, 3.0, 4.0, 99],
                        labels=["〜1.3", "1.4〜1.5", "1.6〜1.8", "1.9〜2.0", "2.1〜2.5", "2.6〜3.0", "3.1〜4.0", "4.1〜"])
@@ -65,6 +65,22 @@ def main():
     for (b, v), g in o.groupby(["オッズ3帯", "事前脚質"], observed=True):
         if len(g) >= 80:
             rows.append({"分析": "(2)オッズ×脚質", "区分": f"{b}・{v}", **rates(g)})
+    # 競馬場ごと: 1番人気の全体と オッズ3帯 (2026年)
+    for c, g in fav.groupby("競馬場"):
+        rows.append({"分析": "(3)競馬場 2023〜26年", "区分": c, **rates(g)})
+    for (c, b), g in o.groupby(["競馬場", "オッズ3帯"], observed=True):
+        if len(g) >= 60:
+            rows.append({"分析": "(3)競馬場×オッズ 2026年", "区分": f"{c}・{b}", **rates(g)})
+    # 馬場ごと
+    fav["馬場"] = fav["馬場"].astype(str).str.strip()
+    o["馬場"] = o["馬場"].astype(str).str.strip()
+    for v, g in fav[fav["馬場"].isin(T.BABA)].groupby("馬場"):
+        rows.append({"分析": "(4)馬場 2023〜26年", "区分": v, **rates(g)})
+    for (v, b), g in fav[fav["馬場"].isin(T.BABA)].groupby(["馬場", "事前脚質"]):
+        if b != "不明":
+            rows.append({"分析": "(4)馬場×脚質 2023〜26年", "区分": f"{v}・{b}", **rates(g)})
+    for (v, b), g in o[o["馬場"].isin(T.BABA)].groupby(["馬場", "オッズ3帯"], observed=True):
+        rows.append({"分析": "(4)馬場×オッズ 2026年", "区分": f"{v}・{b}", **rates(g)})
     t = pd.DataFrame(rows)
     pd.set_option("display.width", 220, "display.max_rows", 300)
     print("1番人気 (2023〜26年):", len(fav), "レース / オッズのある2026年:", len(o), "レース")
